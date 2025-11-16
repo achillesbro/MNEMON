@@ -1,0 +1,22 @@
+{
+  "name": "morpho-daily",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "fetch": "tsx src/fetch-morpho.ts",
+    "start": "npm run fetch",
+    "lint": "echo \"(lint optional)\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "viem": "^2.10.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.2",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}
