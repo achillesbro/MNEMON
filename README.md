@@ -198,13 +198,54 @@ QUALIFY ABS(weight_change) > 0.01
 ORDER BY ts DESC;
 ```
 
+## Consuming MNEMON from other projects
+
+Other projects (a metric library, backtester, market/position scorers) read
+the store; they never import the ingestion. Add MNEMON as a git dependency:
+
+```sh
+uv add "mnemon @ git+https://github.com/achillesbro/MNEMON.git"
+```
+
+```python
+from mnemon.reader import MnemonReader
+
+r = MnemonReader("/home/ubuntu/mnemon/data")   # or set MNEMON_DATA
+r.tables()                       # what's queryable
+r.market_state_latest()          # newest state row per market -> DataFrame
+r.liquidity_risk()               # per-market utilization risk
+r.vault_snapshot()               # current allocations, weights, cap usage
+r.prices(symbol="kHYPE", since="2026-06-01")
+r.sql("SELECT * FROM v_prices WHERE symbol = ?", ["WHYPE"])   # arbitrary SQL
+```
+
+`MnemonReader` reads the Parquet globs through its own in-memory DuckDB, so it
+never locks the cron's `mnemon.duckdb` and is safe to run concurrently. If a
+consumer runs on a different host than the ingestion, either run a MNEMON
+instance there too or `rsync` the small `data/` directory across; point
+`MNEMON_DATA` at it.
+
+Not Python? Read the Parquet globs directly with any DuckDB/Arrow client
+(Rust `duckdb`, Node, polars): `read_parquet('<data>/<table>/**/*.parquet')`.
+
+For an LLM/agent working against the store, point it at [`llms.txt`](llms.txt)
+— a full table-and-view reference with grains, units, and conventions.
+
+> **Cadence caveat:** MNEMON is a 15-min analytics store — right for
+> backtesting, scoring, and context, but *not* a real-time feed. Never use it
+> as the trigger for on-chain actions; validate those against live chain state.
+
 ## Layout
 
 ```
 mnemon/
   config.yaml            # vaults, chains, cadences — the only thing to edit
   run_mnemon.sh          # cron entrypoint
+  llms.txt               # table/view reference for LLMs & agents
   src/mnemon/            # api clients, normalizers, jobs, storage, cli
+    reader.py            # MnemonReader: read API for other projects
+    views.py             # derived-view SQL, shared by ingestion + reader
+  systemd/               # VPS timer units (see docs/DEPLOY.md)
   tests/                 # offline unit tests w/ recorded API fixtures
   docs/SCHEMA_NOTES.md   # Morpho API introspection findings & gotchas
   data/                  # (gitignored) parquet + duckdb + state + logs

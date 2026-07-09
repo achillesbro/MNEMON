@@ -1,0 +1,124 @@
+# MNEMON — data store reference for LLMs / agents
+
+MNEMON is a local historical database of Morpho Blue lending data (markets,
+vault allocations, borrower positions, prices, competing yields). A cron job
+ingests state every 15 minutes into date-partitioned Parquet, queryable with
+DuckDB. It stores RAW STATE and derives metrics at query time.
+
+Use this file as context when writing queries or code against a MNEMON store.
+
+## How to read it (from any project)
+
+The store is a directory of Parquet files (default `~/mnemon/data` on a Mac,
+`/home/ubuntu/mnemon/data` on the VPS). Two equivalent ways in:
+
+- Python helper (recommended):
+    from mnemon.reader import MnemonReader
+    r = MnemonReader("/path/to/mnemon/data")   # or set env MNEMON_DATA
+    df = r.market_state_latest()               # pandas DataFrame
+    df = r.sql("SELECT * FROM v_liquidity_risk ORDER BY pct_time_gt99 DESC")
+- Raw DuckDB over the Parquet globs (any language with a DuckDB/Arrow client):
+    SELECT * FROM read_parquet('<data>/market_state/*/*.parquet', hive_partitioning=1)
+
+RULES:
+- Read-only. Read the Parquet globs (or use MnemonReader) — do NOT open the
+  ingestion's `mnemon.duckdb` file from another process; the cron briefly locks
+  it read-write every 15 min.
+- CADENCE: data is 15-min (live) / hourly (backfilled) snapshots. Fine for
+  backtesting, scoring, and context. NOT a real-time feed — never use it as the
+  trigger for on-chain actions; validate those against live chain state.
+
+## Conventions (apply to every table)
+
+- `ts`: UTC timestamp, floored to the job's cadence bucket. This is the time key.
+- Amounts & shares are EXACT INTEGERS in base units (DECIMAL(38,0)). To get
+  human units, divide by 10^decimals using the `markets` table (loan_decimals /
+  collateral_decimals). The `v_*` views already do this.
+- `utilization` is a fraction 0..1. `lltv` and `rate_at_target` are WAD-scaled
+  (1e18). `rate_at_target` is a PER-SECOND rate; APY = exp(rate/1e18 * 31_536_000) - 1.
+- `oracle_price_raw` is a string scaled by 10^(36 + loan_decimals - collateral_decimals).
+- Addresses are lowercased hex. `market_id` is the 0x-hex Morpho market key.
+- `source` column: `live` (15-min API), `backfill` (hourly history), `rpc` (chain fallback).
+- Markets are auto-discovered from tracked vault allocations; the set grows over time.
+
+## Raw tables
+
+### market_state  — grain: (chain_id, market_id, ts); cadence: 15 min + hourly backfill
+Raw market state over time.
+- ts, chain_id (int), market_id (str)
+- total_supply_assets, total_supply_shares, total_borrow_assets, total_borrow_shares (int base units)
+- rate_at_target (int, per-second WAD; AdaptiveCurveIRM), utilization (float 0..1)
+- oracle_price_raw (str, scaled; null in backfilled rows — no price history upstream)
+- api_timestamp (ts, nullable), source (str)
+
+### markets  — grain: (chain_id, market_id); dimension, refreshed daily
+Static-ish market metadata. Join target for symbols/decimals.
+- chain_id, market_id
+- loan_token, loan_symbol, loan_decimals
+- collateral_token, collateral_symbol, collateral_decimals (all null for IDLE markets)
+- oracle, irm, lltv (int WAD), creation_ts, listed (bool), fetched_at
+
+### vault_allocations  — grain: (chain_id, vault, market_id, ts); cadence: hourly
+How much each tracked vault supplies to each market.
+- ts, chain_id, vault (addr), market_id
+- supply_assets (int), supply_shares (int, null in backfilled rows), supply_cap (int), source
+
+### positions  — grain: (chain_id, market_id, borrower, ts); cadence: daily
+Current borrower positions, snapshotted forward (API serves current only; no
+history before tracking started).
+- ts, chain_id, market_id, borrower (addr)
+- collateral, borrow_shares, borrow_assets, supply_shares (int base units)
+- health_factor (float, nullable)
+
+### prices  — grain: (chain_id, token_address, ts); cadence: hourly
+USD prices from DefiLlama (llama) with Morpho API fallback.
+- ts, chain_id, token_address (addr), price_usd (float)
+- source (`llama` | `llama_chart` | `morpho` | `morpho_history`), confidence (float, llama only)
+
+### yield_pools  — grain: (pool_id, ts); cadence: daily
+Competing venue yields (DefiLlama) on tracked chains.
+- ts, pool_id, chain, project, symbol, tvl_usd, apy, apy_base, apy_reward
+
+### legacy_snapshots  — grain: (chain_id, market_id, ts); one-off import
+Old TS-fetcher daily snapshots — DERIVED values only (no raw state).
+- ts, chain_id, market_id, symbol, loan_token, collateral_token
+- utilization, borrow_apy, supply_apy, available_liquidity, vault_allocation, source_file
+
+## Derived views (prefer these; metrics precomputed)
+
+### v_market_state  — market state in human units
+ts, chain_id, market_id, loan_symbol, collateral_symbol, lltv,
+supply_assets, borrow_assets, liquidity (loan-token units), utilization,
+rate_at_target_per_sec, apy_at_target, oracle_price (USD-ish), source.
+
+### v_vault_allocations  — allocations in human units
+ts, chain_id, vault, market_id, loan_symbol, collateral_symbol,
+supply_assets, supply_cap, source.
+
+### v_vault_snapshot  — each vault's CURRENT allocation (latest ts)
+ts, vault, loan_symbol, collateral_symbol ('IDLE' if none), market_id,
+supply_assets, supply_cap, weight_pct (market's share of the vault),
+cap_used_pct.
+
+### v_liquidity_risk  — per-market utilization risk profile (all history)
+chain_id, market_id, loan_symbol, collateral_symbol, hours_observed,
+pct_time_gt95, pct_time_gt99, avg_util_pct, current_util_pct,
+current_apy_at_target_pct.
+
+### v_prices  — prices with token symbol attached
+ts, chain_id, token_address, symbol, price_usd, source, confidence.
+
+## Example queries
+
+-- Time each market spent at >95% utilization (withdrawal-liquidity risk)
+SELECT loan_symbol, collateral_symbol, pct_time_gt95, current_util_pct
+FROM v_liquidity_risk ORDER BY pct_time_gt95 DESC;
+
+-- Hourly price log-returns per token (volatility / correlation inputs)
+SELECT ts, symbol, LN(price_usd / LAG(price_usd)
+         OVER (PARTITION BY chain_id, token_address ORDER BY ts)) AS log_return
+FROM v_prices QUALIFY log_return IS NOT NULL;
+
+-- A vault's current allocation, richest-first
+SELECT collateral_symbol, supply_assets, weight_pct, cap_used_pct
+FROM v_vault_snapshot WHERE vault = '0x...' ORDER BY supply_assets DESC;
