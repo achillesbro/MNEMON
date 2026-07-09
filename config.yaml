@@ -1,0 +1,52 @@
+# morpho-daily ingestion config.
+# Markets are NOT listed here: at every run the tracked market set is derived
+# from the current allocations of the vaults below (plus extra_markets).
+
+# All relative paths are resolved against this file's directory.
+data_dir: data
+
+chains:
+  - chain_id: 999
+    name: hyperevm
+    # coins.llama.fi coin-key prefix, i.e. "hyperliquid:0x...".
+    llama_slug: hyperliquid
+    # yields.llama.fi "chain" field for this network.
+    yields_chain: "Hyperliquid L1"
+    # Free public RPC — used ONLY as a view-call fallback when the Morpho API
+    # has no state for a tracked market. No log indexing, no backfills.
+    rpc_url: https://rpc.hyperliquid.xyz/evm
+    # Morpho Blue core contract (from the API's morphoBlues query).
+    morpho_blue: "0x68e37dE8d93d3496ae143F2E900490f6280C57cD"
+
+vaults:
+  - address: "0x4DC97f968B0Ba4Edd32D1b9B8Aaf54776c134d42"
+    chain_id: 999
+    label: myrmidons-usdt0
+  - address: "0x889d35426F44A06EE89adF1eC4E5A4C9EB50a4f1"
+    chain_id: 999
+    label: myrmidons-whype
+
+# Markets to track beyond what the vaults allocate into.
+# extra_markets:
+#   - chain_id: 999
+#     market_id: "0x..."
+extra_markets: []
+
+# Job cadences in seconds. `python -m ingest run` (cron every 15 min) runs
+# whichever jobs are due according to the last-success time in the state file.
+cadences:
+  market_state: 900
+  prices: 3600
+  vault_allocations: 3600
+  positions: 86400
+  markets: 86400
+  yield_pools: 86400
+
+http:
+  # Minimum delay between any two outgoing requests (shared across all APIs).
+  min_interval_ms: 300
+  timeout_s: 30
+  max_retries: 5
+
+# Safety cap on position pagination (100 positions per page, per market).
+positions_max_pages: 50

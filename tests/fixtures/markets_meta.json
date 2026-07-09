@@ -1,0 +1,45 @@
+{
+ "items": [
+  {
+   "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
+   "chain": {
+    "id": 999
+   },
+   "lltv": "770000000000000000",
+   "oracleAddress": "0x48153A227aB23343D819239353024C80C498d6dd",
+   "irmAddress": "0xD4a426F010986dCad727e8dd6eed44cA4A9b7483",
+   "creationTimestamp": 1752273480,
+   "listed": true,
+   "loanAsset": {
+    "address": "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
+    "symbol": "USD\u20ae0",
+    "decimals": 6
+   },
+   "collateralAsset": {
+    "address": "0xfD739d4e423301CE9385c1fb8850539D657C296D",
+    "symbol": "kHYPE",
+    "decimals": 18
+   }
+  },
+  {
+   "marketId": "0x1c6b87ae1b97071ef444eedcba9f5a92cfe974edbbcaa1946644fc7ab0e283af",
+   "chain": {
+    "id": 999
+   },
+   "lltv": 0,
+   "oracleAddress": "0x0000000000000000000000000000000000000000",
+   "irmAddress": "0x0000000000000000000000000000000000000000",
+   "creationTimestamp": 1746674416,
+   "listed": true,
+   "loanAsset": {
+    "address": "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb",
+    "symbol": "USD\u20ae0",
+    "decimals": 6
+   },
+   "collateralAsset": null
+  }
+ ],
+ "pageInfo": {
+  "countTotal": 2
+ }
+}

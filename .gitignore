@@ -1,4 +1,15 @@
-node_modules
-.env
+# legacy TS output (kept locally for migration)
 out
+node_modules
 dist
+
+# python
+.venv
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# secrets & local data
+.env
+data/
+.claude/
