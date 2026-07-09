@@ -1,218 +1,163 @@
-# Morpho Daily
+# morpho-daily
 
-A TypeScript tool for fetching and tracking daily snapshots of Morpho Blue market data on HyperEVM. The tool collects market metrics (APY, utilization, liquidity) and vault allocations, saving them as JSON snapshots.
+A local, queryable, reproducible historical store of Morpho market data —
+the data layer for quantitative research on vault strategies (backtests,
+risk analysis). Python ingestion on a 15-min cron, Parquet storage
+partitioned by date, queried via DuckDB.
 
-## Features
+**Principle: store raw state, derive metrics at query time.** Asset/share
+totals are stored as exact integers; APYs, utilization thresholds, price
+returns etc. are computed in SQL from the raw series.
 
-- Fetches market data from Morpho API (with on-chain fallback)
-- Tracks vault allocations across multiple markets
-- Calculates utilization, borrow APY, supply APY, and available liquidity
-- Generates daily timestamped snapshots
-- Supports multiple vaults (USDT0 and WHYPE)
+## Data sources (all free)
 
-## Prerequisites
+1. **Morpho GraphQL API** (`blue-api.morpho.org/graphql`) — primary, incl.
+   hourly historical backfill. See [docs/SCHEMA_NOTES.md](docs/SCHEMA_NOTES.md)
+   for what historical fields actually exist (introspected, verified on
+   HyperEVM) and the API's gotchas.
+2. **DefiLlama free endpoints** — `coins.llama.fi` (prices),
+   `yields.llama.fi/pools` (venue yields).
+3. **Public HyperEVM RPC** — view-call fallback only, used when the Morpho
+   API has no state for a tracked market.
 
-- Node.js (v18 or higher)
-- npm or yarn
-- Access to a HyperEVM RPC endpoint
+All requests go through one shared HTTP client with a global minimum
+request interval and exponential backoff.
 
-## Installation
+## Setup
 
-```bash
-npm install
-```
-
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file in the project root with the following variables:
-
-```env
-# Required
-HYPEREVM_RPC_URL=https://your-hyperevm-rpc-url
-MORPHO_BLUE=0xYourMorphoBlueContractAddress
-VAULT_ADDRESS=0xYourVaultAddress
-# OR use PUBLIC_ALLOCATOR instead of VAULT_ADDRESS
-
-# Optional
-MORPHO_LENS=0xYourMorphoLensContractAddress  # If you have a Lens contract deployed
-```
-
-### Markets Configuration
-
-Edit `markets.json` to specify which markets to track:
-
-```json
-[
-  {
-    "symbol": "USDT0–kHYPE",
-    "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
-    "irmKey": "IRM_ADAPTIVE"
-  }
-]
-```
-
-- `symbol`: Human-readable identifier for the market
-- `marketId`: 32-byte hex string (66 characters including `0x`) identifying the Morpho Blue market
-- `irmKey`: Key matching an IRM configuration in the code (currently supports `IRM_ADAPTIVE`)
-
-## Usage
-
-### Run Once
+Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`).
 
 ```bash
-npm run fetch
+uv sync                                  # create .venv, install deps
+uv run pytest                            # unit tests (offline, fixture-based)
+uv run python -m ingest discover         # sanity check: prints tracked markets
+uv run python -m ingest run              # first run: ingests + full backfill
 ```
 
-or
+The first `run` backfills every tracked market's hourly history since
+creation (plus vault allocations and token prices), so expect a few minutes.
+Subsequent runs are incremental and take seconds.
+
+### Cron
+
+```
+*/15 * * * * /path/to/morpho-daily/run_ingest.sh
+```
+
+One entrypoint, invoked every 15 minutes; it internally decides which jobs
+are due from the last-success timestamps in `data/ingest_state.json`:
+
+| job               | cadence | table              | content                                   |
+|-------------------|---------|--------------------|-------------------------------------------|
+| market_state      | 15 min  | `market_state`     | raw totals, rateAtTarget, oracle price     |
+| vault_allocations | hourly  | `vault_allocations`| per-market supply + cap per vault          |
+| prices            | hourly  | `prices`           | USD prices (llama, morpho fallback)        |
+| markets           | daily   | `markets`          | dimension: tokens, decimals, lltv, oracle; also triggers backfill of newly seen entities |
+| positions         | daily   | `positions`        | current borrower positions (accumulates forward) |
+| yield_pools       | daily   | `yield_pools`      | competing venue yields on tracked chains   |
+
+Failures in one job never abort the others; logs rotate in `data/logs/`.
+
+### Market discovery
+
+No hand-maintained market list. `config.yaml` holds **vault addresses**;
+every run derives the tracked set = union of markets those vaults currently
+allocate into (+ optional `extra_markets`). When a vault adds a market,
+tracking starts automatically and its full hourly history is backfilled at
+the next daily `markets` job (or immediately via `python -m ingest backfill`).
+
+## Commands
 
 ```bash
-npm start
+uv run python -m ingest run                  # run due jobs (what cron calls)
+uv run python -m ingest run --only prices    # force specific jobs
+uv run python -m ingest backfill             # backfill anything not yet backfilled
+uv run python -m ingest backfill --force     # re-pull all history
+uv run python -m ingest check                # data-quality report: gaps, nulls, last runs
+uv run python -m ingest migrate-legacy out/  # import old TS snapshot-*.json files
+uv run python -m ingest init-db              # refresh DuckDB views only
 ```
 
-### Automated Daily Runs
+## Querying
 
-Use the provided shell script with a cron job:
+`data/morpho.duckdb` holds views over the Parquet files — raw tables 1:1
+(`market_state`, `markets`, `vault_allocations`, `positions`, `prices`,
+`yield_pools`, `legacy_snapshots`) plus convenience views `v_market_state`
+and `v_vault_allocations` with symbols, human units, oracle price and APY
+at target already derived.
 
-```bash
-# Make the script executable
-chmod +x run_fetch.sh
-
-# Add to crontab (runs daily at 00:00)
-0 0 * * * /path/to/morpho-daily/run_fetch.sh
+```python
+import duckdb
+con = duckdb.connect("data/morpho.duckdb", read_only=True)
 ```
 
-## Output
+Time at utilization > 95% per market (share of hourly observations):
 
-Snapshots are saved in the `out/` directory:
-
-- `snapshot-YYYY-MM-DD.json`: Daily timestamped snapshots
-- `latest.json`: Most recent snapshot (overwritten on each run)
-- `fetch.log`: Execution logs (if using the shell script)
-
-### Output Format
-
-```json
-{
-  "timestamp": "2025-11-14T12:00:00.000Z",
-  "chainId": 999,
-  "vault": "0x...",
-  "vaults": {
-    "usdt0": "0x...",
-    "whype": "0x..."
-  },
-  "markets": [
-    {
-      "symbol": "USDT0–kHYPE",
-      "marketId": "0x...",
-      "loan": "0x...",
-      "collateral": "0x...",
-      "utilisation": 0.65,
-      "borrowAPY": 0.12,
-      "supplyAPY": 0.08,
-      "availableLiquidity": 1000000.5,
-      "vaultAllocation": 500000.25
-    }
-  ]
-}
+```sql
+SELECT market_id, loan_symbol, collateral_symbol,
+       AVG(CASE WHEN utilization > 0.95 THEN 1.0 ELSE 0 END) AS share_above_95,
+       COUNT(*) AS observations
+FROM v_market_state
+GROUP BY 1, 2, 3
+ORDER BY share_above_95 DESC;
 ```
 
-## Adapting for Your Use Case
+Hourly price log-returns per token:
 
-### Adding New IRMs
-
-Edit `src/fetch-morpho.ts` and add to the `IRMS` object:
-
-```typescript
-const IRMS: Record<string, IrmConfig> = {
-  IRM_ADAPTIVE: { /* existing config */ },
-  IRM_YOUR_NEW: {
-    address: '0x...' as Address,
-    abi: parseAbi([/* your IRM ABI */]),
-    functionName: 'borrowRateView',
-    kind: 'perSecondWad' // or 'perYearWad'
-  }
-};
+```sql
+SELECT ts, token_address, price_usd,
+       LN(price_usd / LAG(price_usd) OVER (PARTITION BY chain_id, token_address ORDER BY ts)) AS log_return
+FROM prices
+QUALIFY log_return IS NOT NULL
+ORDER BY token_address, ts;
 ```
 
-Then reference it in `markets.json` with `"irmKey": "IRM_YOUR_NEW"`.
+Allocation drift per vault (hourly change in each market's share of the vault):
 
-### Supporting Different Chains
-
-1. Update `CHAIN_ID` constant in `src/fetch-morpho.ts`
-2. Update RPC URL in `.env`
-3. Verify Morpho API supports your chain (or rely on on-chain fallback)
-4. Update contract addresses (Morpho Blue, IRMs, vaults)
-
-### Adding New Vaults
-
-1. Add vault address constant:
-```typescript
-const YOUR_VAULT = '0x...' as Address;
+```sql
+WITH alloc AS (
+    SELECT ts, vault, market_id, supply_assets,
+           supply_assets / SUM(supply_assets) OVER (PARTITION BY vault, ts) AS weight
+    FROM v_vault_allocations
+    WHERE supply_assets IS NOT NULL
+)
+SELECT ts, vault, market_id, weight,
+       weight - LAG(weight) OVER (PARTITION BY vault, market_id ORDER BY ts) AS weight_change
+FROM alloc
+QUALIFY ABS(weight_change) > 0.01
+ORDER BY ts DESC;
 ```
 
-2. Update `getVaultForLoanToken()` to map loan tokens to your vault:
-```typescript
-function getVaultForLoanToken(loanToken: Address): Address {
-  // Add your logic here
-  if (loanToken.toLowerCase() === YOUR_TOKEN.toLowerCase()) {
-    return YOUR_VAULT;
-  }
-  // ... existing logic
-}
-```
-
-3. Add to output structure in the main function:
-```typescript
-vaults: {
-  usdt0: VAULT,
-  whype: WHYPE_VAULT,
-  yours: YOUR_VAULT
-}
-```
-
-### Using a Morpho Lens
-
-If you have a Lens contract deployed, set `MORPHO_LENS` in `.env` and update the `LENS_ABI` in `src/fetch-morpho.ts` with your Lens contract's ABI. The code will prefer Lens reads when available.
-
-## Project Structure
+## Layout
 
 ```
 morpho-daily/
-├── src/
-│   └── fetch-morpho.ts    # Main fetch script
-├── out/                    # Output directory (generated)
-├── markets.json            # Market configuration
-├── run_fetch.sh            # Shell script for automation
-├── package.json
-├── tsconfig.json
-└── README.md
+  config.yaml            # vaults, chains, cadences — the only thing to edit
+  run_ingest.sh          # cron entrypoint
+  src/ingest/            # api clients, normalizers, jobs, storage, cli
+  tests/                 # offline unit tests w/ recorded API fixtures
+  docs/SCHEMA_NOTES.md   # Morpho API introspection findings & gotchas
+  data/                  # (gitignored) parquet + duckdb + state + logs
+    market_state/date=YYYY-MM-DD/part-0.parquet
+    ...
+    morpho.duckdb
+    ingest_state.json
 ```
 
-## Development
+## Design notes
 
-### Build
-
-```bash
-npm run build
-```
-
-### Type Checking
-
-The project uses TypeScript with strict mode enabled. Run the TypeScript compiler to check for errors:
-
-```bash
-npx tsc --noEmit
-```
-
-## Troubleshooting
-
-- **"Missing env" error**: Ensure all required environment variables are set in `.env`
-- **"Invalid marketId format"**: Market IDs must be 66-character hex strings starting with `0x`
-- **API fallback**: If Morpho API doesn't support your chain, the tool automatically falls back to on-chain reads
-- **Empty markets**: Markets with `totalSupplyAssets = 0` are skipped
-
-## License
-
-Private project - see package.json for details.
+- **Idempotent by construction**: every row's upsert key includes its
+  cadence bucket (`ts` floored to 15 min / hour / day). Re-runs merge into
+  the day's Parquet file, replacing equal keys — gaps heal, nothing duplicates.
+- **Exact integers**: raw token/share amounts are DECIMAL(38,0) in Parquet
+  (18-decimal shares overflow int64 and float64 loses precision). The raw
+  oracle price can exceed 38 digits and is kept as a string; views cast it.
+- **Backfill granularity is hourly** (the API's finest historical interval);
+  live sampling is 15-min. The `source` column (`live`/`backfill`/`rpc`)
+  distinguishes them.
+- **Positions are current-only upstream**: the API doesn't enumerate
+  historical borrowers, so `positions` accumulates one daily snapshot forward
+  from the day tracking starts.
+- **Old TS snapshots** (`out/snapshot-*.json`) carry only derived values
+  (APY, utilization) without raw state, so they migrate into their own
+  `legacy_snapshots` table rather than being disguised as `market_state`.

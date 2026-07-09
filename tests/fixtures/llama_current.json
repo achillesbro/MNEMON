@@ -1,0 +1,18 @@
+{
+ "coins": {
+  "hyperliquid:0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb": {
+   "decimals": 6,
+   "symbol": "USDT0",
+   "price": 0.998975282722821,
+   "timestamp": 1783602889,
+   "confidence": 0.99
+  },
+  "hyperliquid:0x5555555555555555555555555555555555555555": {
+   "decimals": 18,
+   "symbol": "WHYPE",
+   "price": 67.58810650998915,
+   "timestamp": 1783602889,
+   "confidence": 0.99
+  }
+ }
+}

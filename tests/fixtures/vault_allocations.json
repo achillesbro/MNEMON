@@ -1,0 +1,41 @@
+{
+ "address": "0x4DC97f968B0Ba4Edd32D1b9B8Aaf54776c134d42",
+ "name": "MYRMIDONS USDT0",
+ "state": {
+  "timestamp": 1783603521,
+  "allocation": [
+   {
+    "supplyAssets": 271202133,
+    "supplyShares": 242607495896530,
+    "supplyCap": 10000000000000,
+    "market": {
+     "marketId": "0xa62327642e110efd38ba2d153867a8625c8dc40832e1d211ba4f4151c3de9050"
+    }
+   },
+   {
+    "supplyAssets": 271342030,
+    "supplyShares": 250256866101196,
+    "supplyCap": 10000000000000,
+    "market": {
+     "marketId": "0x8eb8cfe3b1ac8f653608ae09fb099263fa2fe25d4a59305c309937292c2aeee9"
+    }
+   },
+   {
+    "supplyAssets": 163407633,
+    "supplyShares": 153457275278997,
+    "supplyCap": 1000000000000,
+    "market": {
+     "marketId": "0xd5c5b5db889eb5d4f4026b9704cddffbc1356732a37c2b543330c10756ae7a18"
+    }
+   },
+   {
+    "supplyAssets": 380526212,
+    "supplyShares": 353104155746772,
+    "supplyCap": 10000000000000,
+    "market": {
+     "marketId": "0x78f6b57d825ef01a5dc496ad1f426a6375c685047d07a30cd07ac5107ffc7976"
+    }
+   }
+  ]
+ }
+}

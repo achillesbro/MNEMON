@@ -1,0 +1,39 @@
+{
+ "items": [
+  {
+   "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
+   "chain": {
+    "id": 999
+   },
+   "state": {
+    "timestamp": 1783602343,
+    "supplyAssets": 66127656,
+    "supplyShares": 60876356185400,
+    "borrowAssets": 66127656,
+    "borrowShares": 60336758998433,
+    "rateAtTarget": 9133578135,
+    "utilization": 1,
+    "price": "68996150867968122500000000"
+   }
+  },
+  {
+   "marketId": "0x1c6b87ae1b97071ef444eedcba9f5a92cfe974edbbcaa1946644fc7ab0e283af",
+   "chain": {
+    "id": 999
+   },
+   "state": {
+    "timestamp": 1783602304,
+    "supplyAssets": 21507764108,
+    "supplyShares": "21507764108000000",
+    "borrowAssets": 0,
+    "borrowShares": 0,
+    "rateAtTarget": null,
+    "utilization": 0,
+    "price": null
+   }
+  }
+ ],
+ "pageInfo": {
+  "countTotal": 2
+ }
+}

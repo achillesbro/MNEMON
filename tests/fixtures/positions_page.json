@@ -1,0 +1,62 @@
+{
+ "items": [
+  {
+   "user": {
+    "address": "0x7e9b31266d63b290AF3a37d445C572E9AF022975"
+   },
+   "market": {
+    "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
+    "chain": {
+     "id": 999
+    }
+   },
+   "healthFactor": 4.907020747150947,
+   "state": {
+    "collateral": "6000000000000000000",
+    "borrowShares": 59271756197619,
+    "borrowAssets": 64960438,
+    "supplyShares": 0
+   }
+  },
+  {
+   "user": {
+    "address": "0xB47f11484e19f1914D32fd393b17671221C10F1F"
+   },
+   "market": {
+    "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
+    "chain": {
+     "id": 999
+    }
+   },
+   "healthFactor": 8.772628165180889,
+   "state": {
+    "collateral": "190000000000000000",
+    "borrowShares": 1049877163481,
+    "borrowAssets": 1150640,
+    "supplyShares": 1000000000000
+   }
+  },
+  {
+   "user": {
+    "address": "0x8324441B48F8F38432aF272C48F3280cDfdac9aA"
+   },
+   "market": {
+    "marketId": "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62",
+    "chain": {
+     "id": 999
+    }
+   },
+   "healthFactor": 34.05579241559965,
+   "state": {
+    "collateral": 2000000000000000,
+    "borrowShares": 2846791341,
+    "borrowAssets": 3120,
+    "supplyShares": 0
+   }
+  }
+ ],
+ "pageInfo": {
+  "countTotal": 27,
+  "count": 3
+ }
+}
