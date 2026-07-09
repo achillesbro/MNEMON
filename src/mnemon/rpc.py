@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from ingest.config import ChainConfig
+from mnemon.config import ChainConfig
 
 log = logging.getLogger(__name__)
 

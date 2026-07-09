@@ -2,12 +2,12 @@
 
 from pathlib import Path
 
-from ingest.config import load_config
-from ingest.state import IngestState
+from mnemon.config import load_config
+from mnemon.state import MnemonState
 
 
 def test_job_due_logic(tmp_path):
-    state = IngestState(tmp_path / "state.json")
+    state = MnemonState(tmp_path / "state.json")
     assert state.is_due("market_state", 900, now=1000)  # never ran -> due
     state.mark_success("market_state", 1000)
     assert not state.is_due("market_state", 900, now=1500)
@@ -17,13 +17,13 @@ def test_job_due_logic(tmp_path):
 
 def test_state_round_trip(tmp_path):
     path = tmp_path / "state.json"
-    state = IngestState(path)
+    state = MnemonState(path)
     state.mark_success("prices", 123.0)
     state.mark_backfilled("market:999:0xabc")
     state.cache_tracked([[999, "0xabc"]])
     state.save()
 
-    reloaded = IngestState(path)
+    reloaded = MnemonState(path)
     assert reloaded.last_success("prices") == 123.0
     assert reloaded.is_backfilled("market:999:0xabc")
     assert reloaded.cached_tracked() == [[999, "0xabc"]]

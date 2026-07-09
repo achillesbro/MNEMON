@@ -1,4 +1,4 @@
-"""Data-quality report: `python -m ingest check`.
+"""Data-quality report: `python -m mnemon check`.
 
 Reports, per table: row counts, null rates per column, and — for the
 timeseries tables — missing time buckets per market between its first and
@@ -12,10 +12,10 @@ from datetime import datetime, timezone
 
 import duckdb
 
-from ingest.config import Config
-from ingest.schemas import ALL_TABLES, MARKET_STATE, PRICES, VAULT_ALLOCATIONS
-from ingest.state import IngestState
-from ingest.storage import Store
+from mnemon.config import Config
+from mnemon.schemas import ALL_TABLES, MARKET_STATE, PRICES, VAULT_ALLOCATIONS
+from mnemon.state import MnemonState
+from mnemon.storage import Store
 
 # (table, entity columns, expected bucket seconds for gap detection)
 GAP_CHECKS = [
@@ -31,7 +31,7 @@ def run_check(cfg: Config) -> str:
     lines: list[str] = []
 
     lines.append("== last job success ==")
-    state = IngestState(cfg.state_path)
+    state = MnemonState(cfg.state_path)
     for job in ["markets", "market_state", "vault_allocations", "prices", "positions", "yield_pools"]:
         ts = state.last_success(job)
         when = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else "never"

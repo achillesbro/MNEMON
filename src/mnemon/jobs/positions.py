@@ -5,10 +5,10 @@ in SCHEMA_NOTES."""
 
 from __future__ import annotations
 
-from ingest import normalize
-from ingest.jobs.context import Context
-from ingest.schemas import POSITIONS
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.jobs.context import Context
+from mnemon.schemas import POSITIONS
+from mnemon.storage import floor_ts
 
 
 def job_positions(ctx: Context) -> str:

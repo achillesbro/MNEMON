@@ -1,4 +1,4 @@
-from ingest.cli import main
+from mnemon.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

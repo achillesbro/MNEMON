@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 
-class IngestState:
+class MnemonState:
     def __init__(self, path: Path) -> None:
         self._path = path
         self._data: dict = {"jobs": {}, "backfilled": {}, "tracked": {}}

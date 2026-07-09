@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pyarrow.parquet as pq
 
-from ingest.schemas import MARKET_STATE, MARKETS
-from ingest.storage import Store, floor_ts
+from mnemon.schemas import MARKET_STATE, MARKETS
+from mnemon.storage import Store, floor_ts
 
 
 def row(ts_hour: int, market="0xaaa", supply=10**24):

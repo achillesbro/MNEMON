@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from ingest.storage import floor_ts
+from mnemon.storage import floor_ts
 
 HOUR = 3600
 DAY = 86400

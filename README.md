@@ -1,4 +1,7 @@
-# morpho-daily
+# MNEMON
+
+*(Gk. Μνήμων, "the one who remembers" — the record-keeper behind the
+MYRMIDONS stack, feeding HEGEMON and EREBUS.)*
 
 A local, queryable, reproducible historical store of Morpho market data —
 the data layer for quantitative research on vault strategies (backtests,
@@ -30,8 +33,8 @@ Requires [uv](https://docs.astral.sh/uv/) (`brew install uv`).
 ```bash
 uv sync                                  # create .venv, install deps
 uv run pytest                            # unit tests (offline, fixture-based)
-uv run python -m ingest discover         # sanity check: prints tracked markets
-uv run python -m ingest run              # first run: ingests + full backfill
+uv run python -m mnemon discover         # sanity check: prints tracked markets
+uv run python -m mnemon run              # first run: ingests + full backfill
 ```
 
 The first `run` backfills every tracked market's hourly history since
@@ -41,11 +44,11 @@ Subsequent runs are incremental and take seconds.
 ### Cron
 
 ```
-*/15 * * * * /path/to/morpho-daily/run_ingest.sh
+*/15 * * * * /path/to/mnemon/run_mnemon.sh
 ```
 
 One entrypoint, invoked every 15 minutes; it internally decides which jobs
-are due from the last-success timestamps in `data/ingest_state.json`:
+are due from the last-success timestamps in `data/mnemon_state.json`:
 
 | job               | cadence | table              | content                                   |
 |-------------------|---------|--------------------|-------------------------------------------|
@@ -64,23 +67,23 @@ No hand-maintained market list. `config.yaml` holds **vault addresses**;
 every run derives the tracked set = union of markets those vaults currently
 allocate into (+ optional `extra_markets`). When a vault adds a market,
 tracking starts automatically and its full hourly history is backfilled at
-the next daily `markets` job (or immediately via `python -m ingest backfill`).
+the next daily `markets` job (or immediately via `python -m mnemon backfill`).
 
 ## Commands
 
 ```bash
-uv run python -m ingest run                  # run due jobs (what cron calls)
-uv run python -m ingest run --only prices    # force specific jobs
-uv run python -m ingest backfill             # backfill anything not yet backfilled
-uv run python -m ingest backfill --force     # re-pull all history
-uv run python -m ingest check                # data-quality report: gaps, nulls, last runs
-uv run python -m ingest migrate-legacy out/  # import old TS snapshot-*.json files
-uv run python -m ingest init-db              # refresh DuckDB views only
+uv run python -m mnemon run                  # run due jobs (what cron calls)
+uv run python -m mnemon run --only prices    # force specific jobs
+uv run python -m mnemon backfill             # backfill anything not yet backfilled
+uv run python -m mnemon backfill --force     # re-pull all history
+uv run python -m mnemon check                # data-quality report: gaps, nulls, last runs
+uv run python -m mnemon migrate-legacy out/  # import old TS snapshot-*.json files
+uv run python -m mnemon init-db              # refresh DuckDB views only
 ```
 
 ## Querying
 
-`data/morpho.duckdb` holds views over the Parquet files — raw tables 1:1
+`data/mnemon.duckdb` holds views over the Parquet files — raw tables 1:1
 (`market_state`, `markets`, `vault_allocations`, `positions`, `prices`,
 `yield_pools`, `legacy_snapshots`) plus convenience views `v_market_state`
 and `v_vault_allocations` with symbols, human units, oracle price and APY
@@ -88,7 +91,7 @@ at target already derived.
 
 ```python
 import duckdb
-con = duckdb.connect("data/morpho.duckdb", read_only=True)
+con = duckdb.connect("data/mnemon.duckdb", read_only=True)
 ```
 
 Time at utilization > 95% per market (share of hourly observations):
@@ -131,17 +134,17 @@ ORDER BY ts DESC;
 ## Layout
 
 ```
-morpho-daily/
+mnemon/
   config.yaml            # vaults, chains, cadences — the only thing to edit
-  run_ingest.sh          # cron entrypoint
-  src/ingest/            # api clients, normalizers, jobs, storage, cli
+  run_mnemon.sh          # cron entrypoint
+  src/mnemon/            # api clients, normalizers, jobs, storage, cli
   tests/                 # offline unit tests w/ recorded API fixtures
   docs/SCHEMA_NOTES.md   # Morpho API introspection findings & gotchas
   data/                  # (gitignored) parquet + duckdb + state + logs
     market_state/date=YYYY-MM-DD/part-0.parquet
     ...
-    morpho.duckdb
-    ingest_state.json
+    mnemon.duckdb
+    mnemon_state.json
 ```
 
 ## Design notes

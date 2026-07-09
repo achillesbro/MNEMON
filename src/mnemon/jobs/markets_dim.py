@@ -10,10 +10,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from ingest import normalize
-from ingest.jobs.backfill import backfill_new_entities
-from ingest.jobs.context import Context
-from ingest.schemas import MARKETS
+from mnemon import normalize
+from mnemon.jobs.backfill import backfill_new_entities
+from mnemon.jobs.context import Context
+from mnemon.schemas import MARKETS
 
 log = logging.getLogger(__name__)
 

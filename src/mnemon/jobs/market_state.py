@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import logging
 
-from ingest import normalize
-from ingest.jobs.context import Context
-from ingest.rpc import fetch_market_state_rpc
-from ingest.schemas import MARKET_STATE
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.jobs.context import Context
+from mnemon.rpc import fetch_market_state_rpc
+from mnemon.schemas import MARKET_STATE
+from mnemon.storage import floor_ts
 
 log = logging.getLogger(__name__)
 

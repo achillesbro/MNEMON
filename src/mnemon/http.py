@@ -14,7 +14,7 @@ import time
 
 import httpx
 
-from ingest.config import HttpConfig
+from mnemon.config import HttpConfig
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class HttpClient:
         self._cfg = cfg
         self._client = httpx.Client(
             timeout=cfg.timeout_s,
-            headers={"User-Agent": "morpho-daily/2.0 (personal research; low volume)"},
+            headers={"User-Agent": "mnemon/2.0 (personal research; low volume)"},
         )
         self._last_request_at = 0.0
 

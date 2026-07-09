@@ -8,11 +8,11 @@ import logging
 
 import pyarrow.parquet as pq
 
-from ingest import normalize
-from ingest.defillama import coin_key
-from ingest.jobs.context import Context
-from ingest.schemas import MARKETS, PRICES
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.defillama import coin_key
+from mnemon.jobs.context import Context
+from mnemon.schemas import MARKETS, PRICES
+from mnemon.storage import floor_ts
 
 log = logging.getLogger(__name__)
 

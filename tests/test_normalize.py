@@ -5,8 +5,8 @@ yields.llama.fi captured on 2026-07-09, trimmed for size."""
 
 from datetime import datetime, timezone
 
-from ingest import normalize
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.storage import floor_ts
 
 TS = datetime(2026, 7, 9, 12, 0, tzinfo=timezone.utc)
 KHYPE_MKT = "0xc5526286d537c890fdd879d17d80c4a22dc7196c1e1fff0dd6c853692a759c62"

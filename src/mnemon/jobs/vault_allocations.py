@@ -5,10 +5,10 @@ from __future__ import annotations
 
 import logging
 
-from ingest import normalize
-from ingest.jobs.context import Context
-from ingest.schemas import VAULT_ALLOCATIONS
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.jobs.context import Context
+from mnemon.schemas import VAULT_ALLOCATIONS
+from mnemon.storage import floor_ts
 
 log = logging.getLogger(__name__)
 

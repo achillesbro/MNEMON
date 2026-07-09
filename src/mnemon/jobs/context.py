@@ -6,13 +6,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from ingest.config import Config
-from ingest.defillama import LlamaClient
-from ingest.discovery import discover_markets
-from ingest.http import HttpClient
-from ingest.morpho_api import MorphoClient
-from ingest.state import IngestState
-from ingest.storage import Store
+from mnemon.config import Config
+from mnemon.defillama import LlamaClient
+from mnemon.discovery import discover_markets
+from mnemon.http import HttpClient
+from mnemon.morpho_api import MorphoClient
+from mnemon.state import MnemonState
+from mnemon.storage import Store
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Context:
     morpho: MorphoClient
     llama: LlamaClient
     store: Store
-    state: IngestState
+    state: MnemonState
     now: float = field(default_factory=time.time)
     _tracked: list[tuple[int, str]] | None = None
 
@@ -51,5 +51,5 @@ def build_context(cfg: Config) -> Context:
         morpho=MorphoClient(http),
         llama=LlamaClient(http),
         store=Store(cfg.data_dir),
-        state=IngestState(cfg.state_path),
+        state=MnemonState(cfg.state_path),
     )

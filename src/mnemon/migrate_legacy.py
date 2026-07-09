@@ -13,8 +13,8 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from ingest.schemas import LEGACY_SNAPSHOTS
-from ingest.storage import Store
+from mnemon.schemas import LEGACY_SNAPSHOTS
+from mnemon.storage import Store
 
 log = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 
-from ingest.http import HttpClient
+from mnemon.http import HttpClient
 
 log = logging.getLogger(__name__)
 

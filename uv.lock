@@ -760,7 +760,7 @@ wheels = [
 ]
 
 [[package]]
-name = "morpho-daily"
+name = "mnemon"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [

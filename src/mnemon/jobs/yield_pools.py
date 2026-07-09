@@ -3,10 +3,10 @@ filtered to the chains we track (config: chains[].yields_chain)."""
 
 from __future__ import annotations
 
-from ingest import normalize
-from ingest.jobs.context import Context
-from ingest.schemas import YIELD_POOLS
-from ingest.storage import floor_ts
+from mnemon import normalize
+from mnemon.jobs.context import Context
+from mnemon.schemas import YIELD_POOLS
+from mnemon.storage import floor_ts
 
 
 def job_yield_pools(ctx: Context) -> str:

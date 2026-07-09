@@ -21,10 +21,10 @@ from __future__ import annotations
 import logging
 import time
 
-from ingest import normalize
-from ingest.defillama import CHART_MAX_SPAN, coin_key
-from ingest.jobs.context import Context
-from ingest.schemas import MARKET_STATE, PRICES, VAULT_ALLOCATIONS
+from mnemon import normalize
+from mnemon.defillama import CHART_MAX_SPAN, coin_key
+from mnemon.jobs.context import Context
+from mnemon.schemas import MARKET_STATE, PRICES, VAULT_ALLOCATIONS
 
 log = logging.getLogger(__name__)
 

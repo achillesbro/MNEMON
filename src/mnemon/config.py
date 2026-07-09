@@ -62,11 +62,11 @@ class Config(BaseModel):
 
     @property
     def duckdb_path(self) -> Path:
-        return self.data_dir / "morpho.duckdb"
+        return self.data_dir / "mnemon.duckdb"
 
     @property
     def state_path(self) -> Path:
-        return self.data_dir / "ingest_state.json"
+        return self.data_dir / "mnemon_state.json"
 
     @property
     def log_dir(self) -> Path:

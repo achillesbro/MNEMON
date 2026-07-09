@@ -1,4 +1,4 @@
-"""CLI entrypoint: python -m ingest <command>.
+"""CLI entrypoint: python -m mnemon <command>.
 
   run             run whichever jobs are due (cron calls this every 15 min)
   backfill        force the backfill pass (--force re-pulls everything)
@@ -14,14 +14,14 @@ import argparse
 import logging
 from pathlib import Path
 
-from ingest.config import load_config
-from ingest.logging_setup import setup_logging
+from mnemon.config import load_config
+from mnemon.logging_setup import setup_logging
 
 log = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ingest", description=__doc__)
+    parser = argparse.ArgumentParser(prog="mnemon", description=__doc__)
     parser.add_argument("--config", default="config.yaml", help="path to config.yaml")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -44,23 +44,23 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(cfg.log_dir, args.verbose)
 
     if args.command == "check":
-        from ingest.check import run_check
+        from mnemon.check import run_check
 
         print(run_check(cfg))
         return 0
 
     if args.command == "init-db":
-        from ingest.duck import refresh_views
-        from ingest.storage import Store
+        from mnemon.duck import refresh_views
+        from mnemon.storage import Store
 
         refresh_views(cfg, Store(cfg.data_dir))
         print(f"views refreshed in {cfg.duckdb_path}")
         return 0
 
     if args.command == "migrate-legacy":
-        from ingest.duck import refresh_views
-        from ingest.migrate_legacy import migrate
-        from ingest.storage import Store
+        from mnemon.duck import refresh_views
+        from mnemon.migrate_legacy import migrate
+        from mnemon.storage import Store
 
         store = Store(cfg.data_dir)
         print(migrate(args.dir.resolve(), store))
@@ -68,9 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     # Commands below need live API clients.
-    from ingest.duck import refresh_views
-    from ingest.jobs import run_due_jobs
-    from ingest.jobs.context import build_context
+    from mnemon.duck import refresh_views
+    from mnemon.jobs import run_due_jobs
+    from mnemon.jobs.context import build_context
 
     ctx = build_context(cfg)
     try:

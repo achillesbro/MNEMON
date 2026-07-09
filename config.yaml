@@ -1,4 +1,4 @@
-# morpho-daily ingestion config.
+# mnemon ingestion config.
 # Markets are NOT listed here: at every run the tracked market set is derived
 # from the current allocations of the vaults below (plus extra_markets).
 
@@ -32,7 +32,7 @@ vaults:
 #     market_id: "0x..."
 extra_markets: []
 
-# Job cadences in seconds. `python -m ingest run` (cron every 15 min) runs
+# Job cadences in seconds. `python -m mnemon run` (cron every 15 min) runs
 # whichever jobs are due according to the last-success time in the state file.
 cadences:
   market_state: 900

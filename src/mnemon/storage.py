@@ -18,7 +18,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from ingest.schemas import TableSpec
+from mnemon.schemas import TableSpec
 
 log = logging.getLogger(__name__)
 

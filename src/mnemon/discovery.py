@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import logging
 
-from ingest.config import Config
-from ingest.morpho_api import MorphoClient
-from ingest.state import IngestState
+from mnemon.config import Config
+from mnemon.morpho_api import MorphoClient
+from mnemon.state import MnemonState
 
 log = logging.getLogger(__name__)
 
 
-def discover_markets(cfg: Config, morpho: MorphoClient, state: IngestState) -> list[tuple[int, str]]:
+def discover_markets(cfg: Config, morpho: MorphoClient, state: MnemonState) -> list[tuple[int, str]]:
     """Returns sorted (chain_id, market_id) pairs."""
     tracked: set[tuple[int, str]] = {(m.chain_id, m.market_id) for m in cfg.extra_markets}
     failed = False

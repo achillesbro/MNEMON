@@ -11,9 +11,9 @@ import logging
 
 import duckdb
 
-from ingest.config import Config
-from ingest.schemas import ALL_TABLES
-from ingest.storage import Store
+from mnemon.config import Config
+from mnemon.schemas import ALL_TABLES
+from mnemon.storage import Store
 
 log = logging.getLogger(__name__)
 

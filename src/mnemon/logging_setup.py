@@ -11,7 +11,7 @@ def setup_logging(log_dir: Path, verbose: bool = False) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-    file_handler = RotatingFileHandler(log_dir / "ingest.log", maxBytes=5_000_000, backupCount=3)
+    file_handler = RotatingFileHandler(log_dir / "mnemon.log", maxBytes=5_000_000, backupCount=3)
     file_handler.setFormatter(fmt)
 
     console = logging.StreamHandler()

@@ -2,9 +2,9 @@
 
 import json
 
-from ingest.migrate_legacy import migrate, snapshot_rows
-from ingest.schemas import LEGACY_SNAPSHOTS
-from ingest.storage import Store
+from mnemon.migrate_legacy import migrate, snapshot_rows
+from mnemon.schemas import LEGACY_SNAPSHOTS
+from mnemon.storage import Store
 
 OLD_SNAPSHOT = {
     "timestamp": "2025-11-14T12:00:00.000Z",
