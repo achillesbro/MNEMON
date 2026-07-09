@@ -1,0 +1,16 @@
+# MNEMON ingestion — oneshot service triggered by mnemon.timer.
+# Install to /etc/systemd/system/ (see docs/DEPLOY.md).
+# Adjust User / WorkingDirectory / ExecStart if you deploy elsewhere.
+[Unit]
+Description=MNEMON Morpho data ingestion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/mnemon
+ExecStart=/home/ubuntu/mnemon/run_mnemon.sh
+# stdout/stderr are captured by journald: `journalctl -u mnemon`.
+# A single slow API call shouldn't wedge the timer forever.
+TimeoutStartSec=1200
