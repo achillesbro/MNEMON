@@ -41,14 +41,23 @@ The first `run` backfills every tracked market's hourly history since
 creation (plus vault allocations and token prices), so expect a few minutes.
 Subsequent runs are incremental and take seconds.
 
-### Cron
+### Scheduling
+
+One entrypoint (`run_mnemon.sh`), invoked every 15 minutes; it internally
+decides which jobs are due from the last-success timestamps in
+`data/mnemon_state.json`.
+
+**Local (macOS/Linux) via cron** — redirect output yourself:
 
 ```
-*/15 * * * * /path/to/mnemon/run_mnemon.sh
+*/15 * * * * /path/to/mnemon/run_mnemon.sh >> /path/to/mnemon/data/logs/cron.log 2>&1
 ```
 
-One entrypoint, invoked every 15 minutes; it internally decides which jobs
-are due from the last-success timestamps in `data/mnemon_state.json`:
+**On a VPS via systemd timer** — recommended for a remote box (logs to
+journald, survives reboots). See [docs/DEPLOY.md](docs/DEPLOY.md); unit files
+are in [`systemd/`](systemd/).
+
+Job cadences:
 
 | job               | cadence | table              | content                                   |
 |-------------------|---------|--------------------|-------------------------------------------|
