@@ -79,6 +79,73 @@ def refresh_views(cfg: Config, store: Store) -> None:
                 FROM vault_allocations va
                 LEFT JOIN markets m USING (chain_id, market_id)
             """)
+
+            # v_vault_snapshot: each vault's CURRENT allocation (its latest ts),
+            # with each market's share of the vault and how much of its cap is
+            # used. The self-join on MAX(ts) keeps it live as new rows land.
+            con.execute("""
+                CREATE OR REPLACE VIEW v_vault_snapshot AS
+                WITH latest AS (SELECT vault, MAX(ts) AS mx FROM vault_allocations GROUP BY vault)
+                SELECT
+                    va.ts,
+                    va.vault,
+                    m.loan_symbol,
+                    COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+                    va.market_id,
+                    va.supply_assets::DOUBLE / POW(10, m.loan_decimals) AS supply_assets,
+                    va.supply_cap::DOUBLE   / POW(10, m.loan_decimals) AS supply_cap,
+                    100.0 * va.supply_assets
+                        / NULLIF(SUM(va.supply_assets) OVER (PARTITION BY va.vault), 0) AS weight_pct,
+                    100.0 * va.supply_assets / NULLIF(va.supply_cap, 0) AS cap_used_pct
+                FROM vault_allocations va
+                JOIN latest l ON va.vault = l.vault AND va.ts = l.mx
+                LEFT JOIN markets m USING (chain_id, market_id)
+            """)
+
+        if {"market_state", "markets"} <= available:
+            # v_liquidity_risk: per-market withdrawal-liquidity profile over all
+            # history (how often utilization was extreme = how often you could
+            # not have exited) plus the current utilization / rate regime.
+            # arg_max(x, ts) = value of x in the row with the newest ts.
+            con.execute(f"""
+                CREATE OR REPLACE VIEW v_liquidity_risk AS
+                SELECT
+                    ms.chain_id,
+                    ms.market_id,
+                    m.loan_symbol,
+                    COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+                    COUNT(*) AS hours_observed,
+                    100.0 * AVG(CASE WHEN ms.utilization > 0.95 THEN 1 ELSE 0 END) AS pct_time_gt95,
+                    100.0 * AVG(CASE WHEN ms.utilization > 0.99 THEN 1 ELSE 0 END) AS pct_time_gt99,
+                    100.0 * AVG(ms.utilization)               AS avg_util_pct,
+                    100.0 * arg_max(ms.utilization, ms.ts)    AS current_util_pct,
+                    100.0 * (EXP(arg_max(ms.rate_at_target, ms.ts)::DOUBLE / 1e18 * {SECONDS_PER_YEAR}) - 1)
+                        AS current_apy_at_target_pct
+                FROM market_state ms
+                LEFT JOIN markets m USING (chain_id, market_id)
+                GROUP BY ms.chain_id, ms.market_id, m.loan_symbol, m.collateral_symbol
+            """)
+
+        if {"prices", "markets"} <= available:
+            # v_prices: attach a human symbol to each price row by matching the
+            # token address against the loan/collateral columns of the markets
+            # dimension, so you can filter by symbol instead of raw 0x address.
+            con.execute("""
+                CREATE OR REPLACE VIEW v_prices AS
+                SELECT
+                    p.ts,
+                    p.chain_id,
+                    p.token_address,
+                    COALESCE(ml.loan_symbol, mc.collateral_symbol) AS symbol,
+                    p.price_usd,
+                    p.source,
+                    p.confidence
+                FROM prices p
+                LEFT JOIN (SELECT DISTINCT chain_id, loan_token, loan_symbol FROM markets) ml
+                    ON p.chain_id = ml.chain_id AND p.token_address = ml.loan_token
+                LEFT JOIN (SELECT DISTINCT chain_id, collateral_token, collateral_symbol FROM markets) mc
+                    ON p.chain_id = mc.chain_id AND p.token_address = mc.collateral_token
+            """)
         log.info("duckdb views refreshed: %s", ", ".join(sorted(available)) or "none")
     finally:
         con.close()
