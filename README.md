@@ -92,39 +92,97 @@ uv run python -m mnemon init-db              # refresh DuckDB views only
 
 ## Querying
 
-`data/mnemon.duckdb` holds views over the Parquet files — raw tables 1:1
-(`market_state`, `markets`, `vault_allocations`, `positions`, `prices`,
-`yield_pools`, `legacy_snapshots`) plus convenience views `v_market_state`
-and `v_vault_allocations` with symbols, human units, oracle price and APY
-at target already derived.
+The store *is* the API: everything lives in `data/mnemon.duckdb` (views over
+the Parquet files) or the Parquet files themselves. Nothing to run, no server
+— you point DuckDB at it read-only.
+
+### Three ways to query
+
+**1. DuckDB CLI** — best for ad-hoc exploration (one-time `brew install duckdb`):
+
+```sh
+duckdb data/mnemon.duckdb                     # interactive REPL
+duckdb data/mnemon.duckdb -c "FROM v_vault_snapshot LIMIT 5"   # one-shot
+```
+
+**2. Python, ad-hoc** — no extra install; `.sql(...)` pretty-prints a table:
+
+```sh
+uv run python -c "import duckdb; print(duckdb.connect('data/mnemon.duckdb', read_only=True).sql('FROM v_liquidity_risk ORDER BY pct_time_gt99 DESC LIMIT 5'))"
+```
+
+**3. Python → pandas** — the integration point for downstream code (the
+`myrmidons` metric library, the backtester). `.df()` returns a DataFrame:
 
 ```python
 import duckdb
-con = duckdb.connect("data/mnemon.duckdb", read_only=True)
+
+con = duckdb.connect("data/mnemon.duckdb", read_only=True)  # read-only: safe while cron writes
+df = con.sql("""
+    SELECT ts, utilization, apy_at_target, oracle_price
+    FROM v_market_state
+    WHERE collateral_symbol = 'kHYPE' AND loan_symbol = 'USD₮0'
+    ORDER BY ts
+""").df()
 ```
 
-Time at utilization > 95% per market (share of hourly observations):
+Downstream code doesn't even need the `.duckdb` file — it can read the
+Parquet globs directly, which makes the dataset trivially portable:
 
-```sql
-SELECT market_id, loan_symbol, collateral_symbol,
-       AVG(CASE WHEN utilization > 0.95 THEN 1.0 ELSE 0 END) AS share_above_95,
-       COUNT(*) AS observations
-FROM v_market_state
-GROUP BY 1, 2, 3
-ORDER BY share_above_95 DESC;
+```python
+duckdb.sql("SELECT * FROM read_parquet('data/prices/*/*.parquet', hive_partitioning=1)")
 ```
 
-Hourly price log-returns per token:
+### Views
+
+Raw tables, exposed 1:1 (integer amounts, exact): `market_state`, `markets`,
+`vault_allocations`, `positions`, `prices`, `yield_pools`, `legacy_snapshots`.
+
+Derived convenience views (symbols joined, human units, metrics computed from
+raw state):
+
+| view | one row per | gives you |
+|------|-------------|-----------|
+| `v_market_state`      | market × timestamp | supply/borrow/liquidity in token units, utilization, `apy_at_target`, `oracle_price` |
+| `v_vault_allocations` | vault × market × ts | supply & cap in token units over time |
+| `v_vault_snapshot`    | vault × market (current) | latest allocation with `weight_pct` and `cap_used_pct` |
+| `v_liquidity_risk`    | market | `pct_time_gt95/99`, `avg_util_pct`, and current util / APY-at-target |
+| `v_prices`            | token × ts | price with the token `symbol` attached |
+
+### Example queries
+
+Current allocation of a vault, richest-first:
 
 ```sql
-SELECT ts, token_address, price_usd,
+SELECT collateral_symbol, ROUND(supply_assets) AS supplied,
+       ROUND(weight_pct, 1) AS weight_pct, ROUND(cap_used_pct, 2) AS cap_used_pct
+FROM v_vault_snapshot
+WHERE vault = '0x4dc97f968b0ba4edd32d1b9b8aaf54776c134d42' AND supply_assets > 0
+ORDER BY supply_assets DESC;
+```
+
+Withdrawal-liquidity risk — how often each market sat at extreme utilization:
+
+```sql
+SELECT loan_symbol, collateral_symbol, hours_observed,
+       ROUND(pct_time_gt99, 1) AS pct_time_gt99,
+       ROUND(current_util_pct, 1) AS current_util,
+       ROUND(current_apy_at_target_pct, 2) AS apy_at_target
+FROM v_liquidity_risk
+ORDER BY pct_time_gt99 DESC;
+```
+
+Hourly price log-returns per token (feed volatility / correlation):
+
+```sql
+SELECT ts, symbol, price_usd,
        LN(price_usd / LAG(price_usd) OVER (PARTITION BY chain_id, token_address ORDER BY ts)) AS log_return
-FROM prices
+FROM v_prices
 QUALIFY log_return IS NOT NULL
-ORDER BY token_address, ts;
+ORDER BY symbol, ts;
 ```
 
-Allocation drift per vault (hourly change in each market's share of the vault):
+Allocation drift per vault (hourly change in each market's share):
 
 ```sql
 WITH alloc AS (
