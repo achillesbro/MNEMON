@@ -9,7 +9,7 @@ import pytest
 
 from mnemon.config import Config
 from mnemon.duck import refresh_views
-from mnemon.schemas import MARKET_STATE, MARKETS, PRICES, VAULT_ALLOCATIONS
+from mnemon.schemas import MARKET_STATE, MARKETS, POSITIONS, PRICES, VAULT_ALLOCATIONS
 from mnemon.storage import Store
 
 TS = datetime(2026, 7, 9, 12, 0, tzinfo=timezone.utc)
@@ -52,7 +52,18 @@ def store(tmp_path):
     ])
     s.upsert(PRICES, [
         dict(ts=TS, chain_id=999, token_address=KHYPE, price_usd=68.5, source="llama", confidence=0.99),
+        dict(ts=TS.replace(hour=13), chain_id=999, token_address=KHYPE, price_usd=70.0,
+             source="llama", confidence=0.99),  # second hour -> one log return
         dict(ts=TS, chain_id=999, token_address=USDT0, price_usd=0.999, source="llama", confidence=0.99),
+    ])
+    # three borrowers: one near liquidation, one dominant by size, one tiny
+    s.upsert(POSITIONS, [
+        dict(ts=TS, chain_id=999, market_id=MID_A, borrower="0xb1", collateral=10**18,
+             borrow_shares=10**9, borrow_assets=600_000, supply_shares=0, health_factor=1.02),
+        dict(ts=TS, chain_id=999, market_id=MID_A, borrower="0xb2", collateral=10**19,
+             borrow_shares=10**10, borrow_assets=300_000, supply_shares=0, health_factor=2.5),
+        dict(ts=TS, chain_id=999, market_id=MID_A, borrower="0xb3", collateral=10**17,
+             borrow_shares=10**8, borrow_assets=100_000, supply_shares=0, health_factor=8.0),
     ])
     return s
 
@@ -72,7 +83,73 @@ def test_all_views_exist(con):
     views = {r[0] for r in con.execute(
         "SELECT view_name FROM duckdb_views() WHERE NOT internal").fetchall()}
     assert {"v_market_state", "v_vault_allocations", "v_vault_snapshot",
-            "v_liquidity_risk", "v_prices"} <= views
+            "v_liquidity_risk", "v_prices", "v_market_snapshot",
+            "v_position_risk", "v_utilization_regime", "v_price_returns"} <= views
+
+
+def test_views_carry_full_ids(con):
+    """Ids must never be truncated in the stored/derived data (display-side
+    truncation is a pandas setting, not ours)."""
+    for view, col in [("v_market_snapshot", "market_id"), ("v_vault_snapshot", "vault"),
+                      ("v_position_risk", "market_id"), ("v_prices", "token_address")]:
+        vals = [r[0] for r in con.execute(f"SELECT {col} FROM {view}").fetchall()]
+        assert vals and all(v.startswith("0x") for v in vals)
+    # the 42-char vault address survives intact
+    assert con.execute("SELECT vault FROM v_vault_snapshot LIMIT 1").fetchone()[0] == VAULT
+
+
+def test_v_market_snapshot_one_row_per_market_latest(con):
+    # epoch instead of selecting ts: fetching timestamptz needs pytz (not a
+    # dep), and EXTRACT(hour ...) would follow the session timezone
+    rows = con.execute(
+        "SELECT market_id, EXTRACT(epoch FROM ts), utilization, lltv, listed FROM v_market_snapshot"
+    ).fetchall()
+    assert len(rows) == 1  # one market has state; one row, the latest
+    market_id, epoch, util, lltv, listed = rows[0]
+    assert market_id == MID_A
+    assert epoch == TS.replace(hour=11).timestamp()  # newest of the two rows
+    assert util == pytest.approx(1.0)
+    assert lltv == pytest.approx(0.915) and listed
+
+
+def test_v_position_risk_hf_and_concentration(con):
+    row = con.execute("""
+        SELECT borrowers, total_borrow, min_hf, borrowers_hf_lt_105,
+               debt_hf_lt_105, pct_debt_hf_lt_105, top3_debt_pct
+        FROM v_position_risk WHERE market_id = ?
+    """, [MID_A]).fetchone()
+    borrowers, total, min_hf, n_risky, debt_risky, pct_risky, top3 = row
+    assert borrowers == 3
+    assert total == pytest.approx(1.0)          # 1_000_000 / 10^6
+    assert min_hf == pytest.approx(1.02)
+    assert n_risky == 1                          # only 0xb1 under 1.05
+    assert debt_risky == pytest.approx(0.6)
+    assert pct_risky == pytest.approx(60.0)
+    assert top3 == pytest.approx(100.0)          # only 3 borrowers total
+
+
+def test_v_utilization_regime_windows(con):
+    # fixture data is from 2026-07-09 — outside any trailing window, so the
+    # FILTERed aggregates must be NULL rather than wrong, and current_* still real
+    row = con.execute("""
+        SELECT avg_util_7d, current_util_pct FROM v_utilization_regime WHERE market_id = ?
+    """, [MID_A]).fetchone()
+    assert row[0] is None
+    assert row[1] == pytest.approx(100.0)
+
+
+def test_v_price_returns_log_return_and_vol(con):
+    import math
+
+    rows = con.execute("""
+        SELECT log_return_1h, vol_7d_ann FROM v_price_returns
+        WHERE symbol = 'kHYPE' ORDER BY ts
+    """).fetchall()
+    assert len(rows) == 2
+    assert rows[0][0] is None  # first observation has no return
+    assert rows[1][0] == pytest.approx(math.log(70.0 / 68.5))
+    # a single return has no sample stddev -> NULL, not 0
+    assert rows[1][1] is None
 
 
 def test_v_market_state_derivations(con):

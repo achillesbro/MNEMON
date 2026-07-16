@@ -1,12 +1,13 @@
-# Fires mnemon.service every 15 minutes. Install alongside the service and
+# Fires mnemon.service every 5 minutes. Install alongside the service and
 # enable with: sudo systemctl enable --now mnemon.timer
 [Unit]
-Description=Run MNEMON ingestion every 15 minutes
+Description=Run MNEMON ingestion every 5 minutes
 
 [Timer]
-# Every 15 min on the wall clock (:00, :15, :30, :45). Minute-based, so the
-# host timezone is irrelevant — MNEMON buckets timestamps in UTC internally.
-OnCalendar=*:0/15
+# Every 5 min on the wall clock. Minute-based, so the host timezone is
+# irrelevant — MNEMON buckets timestamps in UTC internally. The run itself
+# decides which jobs are due, so most ticks only fetch market_state.
+OnCalendar=*:0/5
 # Run a missed cycle once on boot if the VPS was down at the scheduled time.
 Persistent=true
 # Let systemd spread load slightly rather than firing dead-on the second.

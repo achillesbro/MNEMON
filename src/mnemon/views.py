@@ -143,6 +143,142 @@ DERIVED_VIEWS: list[DerivedView] = [
             ON p.chain_id = mc.chain_id AND p.token_address = mc.collateral_token
         """,
     ),
+    DerivedView(
+        "v_market_snapshot",
+        frozenset({"market_state", "markets"}),
+        # One row per market: the newest state plus the full dimension — a
+        # "market screener" so consumers grab one table instead of joining three.
+        f"""
+        SELECT
+            ms.ts,
+            ms.chain_id,
+            ms.market_id,
+            m.loan_symbol,
+            COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+            m.loan_token,
+            m.collateral_token,
+            m.oracle,
+            m.irm,
+            m.creation_ts,
+            m.listed,
+            m.lltv::DOUBLE / 1e18                                     AS lltv,
+            ms.total_supply_assets::DOUBLE / POW(10, m.loan_decimals) AS supply_assets,
+            ms.total_borrow_assets::DOUBLE / POW(10, m.loan_decimals) AS borrow_assets,
+            (ms.total_supply_assets - ms.total_borrow_assets)::DOUBLE
+                / POW(10, m.loan_decimals)                            AS liquidity,
+            ms.utilization,
+            EXP(ms.rate_at_target::DOUBLE / 1e18 * {SECONDS_PER_YEAR}) - 1 AS apy_at_target,
+            TRY_CAST(ms.oracle_price_raw AS DOUBLE)
+                / POW(10, 36 + m.loan_decimals - m.collateral_decimals) AS oracle_price
+        FROM market_state ms
+        LEFT JOIN markets m USING (chain_id, market_id)
+        QUALIFY ms.ts = MAX(ms.ts) OVER (PARTITION BY ms.chain_id, ms.market_id)
+        """,
+    ),
+    DerivedView(
+        "v_position_risk",
+        frozenset({"positions", "markets"}),
+        # Per-market borrower risk from the latest positions snapshot: how much
+        # debt sits within 5% of liquidation (HF < 1.05), and how concentrated
+        # the book is. list_sum(list_slice(list_sort(...))) = top-3 debt share.
+        """
+        WITH latest AS (
+            SELECT chain_id, market_id, MAX(ts) AS mx FROM positions GROUP BY 1, 2
+        ),
+        p AS (
+            SELECT po.* FROM positions po
+            JOIN latest l ON po.chain_id = l.chain_id AND po.market_id = l.market_id AND po.ts = l.mx
+        )
+        SELECT
+            p.chain_id,
+            p.market_id,
+            m.loan_symbol,
+            COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+            MAX(p.ts) AS ts,
+            COUNT(*) AS borrowers,
+            SUM(p.borrow_assets)::DOUBLE / POW(10, m.loan_decimals) AS total_borrow,
+            MIN(p.health_factor) AS min_hf,
+            COUNT(*) FILTER (WHERE p.health_factor < 1.05) AS borrowers_hf_lt_105,
+            COALESCE(SUM(p.borrow_assets) FILTER (WHERE p.health_factor < 1.05), 0)::DOUBLE
+                / POW(10, m.loan_decimals) AS debt_hf_lt_105,
+            100.0 * COALESCE(SUM(p.borrow_assets) FILTER (WHERE p.health_factor < 1.05), 0)::DOUBLE
+                / NULLIF(SUM(p.borrow_assets)::DOUBLE, 0) AS pct_debt_hf_lt_105,
+            100.0 * list_sum(list_slice(list_sort(list(p.borrow_assets::DOUBLE), 'DESC'), 1, 3))
+                / NULLIF(SUM(p.borrow_assets)::DOUBLE, 0) AS top3_debt_pct
+        FROM p
+        LEFT JOIN markets m USING (chain_id, market_id)
+        GROUP BY p.chain_id, p.market_id, m.loan_symbol, m.collateral_symbol, m.loan_decimals
+        """,
+    ),
+    DerivedView(
+        "v_utilization_regime",
+        frozenset({"market_state", "markets"}),
+        # Trailing 7d/30d utilization regime per market. The all-history stats
+        # in v_liquidity_risk dilute as markets mature; these windows answer
+        # "what is this market like NOW". now() evaluates at query time, so the
+        # windows always trail the present.
+        f"""
+        SELECT
+            ms.chain_id,
+            ms.market_id,
+            m.loan_symbol,
+            COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+            100.0 * AVG(ms.utilization) FILTER (WHERE ms.ts > now() - INTERVAL 7 DAY)  AS avg_util_7d,
+            100.0 * AVG(ms.utilization) FILTER (WHERE ms.ts > now() - INTERVAL 30 DAY) AS avg_util_30d,
+            100.0 * AVG(CASE WHEN ms.utilization > 0.95 THEN 1 ELSE 0 END)
+                FILTER (WHERE ms.ts > now() - INTERVAL 7 DAY)  AS pct_time_gt95_7d,
+            100.0 * AVG(CASE WHEN ms.utilization > 0.95 THEN 1 ELSE 0 END)
+                FILTER (WHERE ms.ts > now() - INTERVAL 30 DAY) AS pct_time_gt95_30d,
+            100.0 * AVG(CASE WHEN ms.utilization > 0.99 THEN 1 ELSE 0 END)
+                FILTER (WHERE ms.ts > now() - INTERVAL 7 DAY)  AS pct_time_gt99_7d,
+            100.0 * AVG(CASE WHEN ms.utilization > 0.99 THEN 1 ELSE 0 END)
+                FILTER (WHERE ms.ts > now() - INTERVAL 30 DAY) AS pct_time_gt99_30d,
+            100.0 * arg_max(ms.utilization, ms.ts) AS current_util_pct,
+            100.0 * (EXP(arg_max(ms.rate_at_target, ms.ts)::DOUBLE / 1e18 * {SECONDS_PER_YEAR}) - 1)
+                AS current_apy_at_target_pct
+        FROM market_state ms
+        LEFT JOIN markets m USING (chain_id, market_id)
+        GROUP BY ms.chain_id, ms.market_id, m.loan_symbol, m.collateral_symbol
+        """,
+    ),
+    DerivedView(
+        "v_price_returns",
+        frozenset({"prices", "markets"}),
+        # Hourly log-returns and rolling annualized volatility per token — the
+        # collateral-risk input (compare vol against a market's 1 - LLTV buffer).
+        # Restricted to on-the-hour rows so a finer prices cadence doesn't
+        # silently change the return horizon; sqrt(8760) annualizes 1h returns.
+        # RANGE windows (not ROWS) so price gaps don't stretch the lookback.
+        """
+        WITH hourly AS (
+            SELECT ts, chain_id, token_address, symbol, price_usd
+            FROM v_prices
+            WHERE EXTRACT(minute FROM ts) = 0 AND price_usd > 0
+        ),
+        r AS (
+            SELECT *,
+                   LN(price_usd / LAG(price_usd) OVER (PARTITION BY chain_id, token_address ORDER BY ts))
+                       AS log_return_1h
+            FROM hourly
+        )
+        SELECT
+            ts,
+            chain_id,
+            token_address,
+            symbol,
+            price_usd,
+            log_return_1h,
+            STDDEV_SAMP(log_return_1h) OVER (
+                PARTITION BY chain_id, token_address ORDER BY ts
+                RANGE BETWEEN INTERVAL 7 DAY PRECEDING AND CURRENT ROW
+            ) * SQRT(8760) AS vol_7d_ann,
+            STDDEV_SAMP(log_return_1h) OVER (
+                PARTITION BY chain_id, token_address ORDER BY ts
+                RANGE BETWEEN INTERVAL 30 DAY PRECEDING AND CURRENT ROW
+            ) * SQRT(8760) AS vol_30d_ann
+        FROM r
+        """,
+    ),
 ]
 
 

@@ -76,7 +76,8 @@ def run_check(cfg: Config) -> str:
         if not gaps:
             lines.append("  none - every entity is gap-free")
         for row in gaps[:15]:
-            entity = " ".join(str(v)[:12] for v in row[: len(entity_cols)])
+            # Full ids, never truncated — a report you can copy addresses from.
+            entity = " ".join(str(v) for v in row[: len(entity_cols)])
             first, last, expected, actual = row[len(entity_cols) :]
             lines.append(f"  {entity}: {expected - actual} missing of {expected} ({first} -> {last})")
         if len(gaps) > 15:

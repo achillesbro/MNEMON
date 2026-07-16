@@ -1,7 +1,7 @@
 # Deploying MNEMON on a Linux VPS (systemd)
 
 MNEMON is a scheduled batch job, not an always-on service: a systemd timer
-runs the ingestion every 15 minutes. No Docker, no web server. These steps
+runs the ingestion every 5 minutes. No Docker, no web server. These steps
 assume Ubuntu with user `ubuntu` and the repo at `/home/ubuntu/mnemon`;
 adjust paths (and the `User`/`WorkingDirectory` in `systemd/mnemon.service`)
 if yours differ.

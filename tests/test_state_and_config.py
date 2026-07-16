@@ -33,5 +33,6 @@ def test_load_repo_config():
     cfg = load_config(Path(__file__).parent.parent / "config.yaml")
     assert cfg.chain(999).llama_slug == "hyperliquid"
     assert len(cfg.vaults) == 2
-    assert cfg.cadences.market_state == 900
+    assert cfg.cadences.market_state == 300
+    assert cfg.cadences.positions == 3600
     assert cfg.data_dir.is_absolute()
