@@ -1,8 +1,10 @@
 # Morpho GraphQL API — introspection findings
 
-Recorded 2026-07-09 against `https://blue-api.morpho.org/graphql`, verified
-with live queries on HyperEVM (chainId 999). This is the evidence behind the
-backfill design; if the API changes, re-verify here first.
+Recorded 2026-07-09 against `https://blue-api.morpho.org/graphql` — since
+renamed to `https://api.morpho.org/graphql` (same API; verified identical
+responses 2026-07-16) — with live queries on HyperEVM (chainId 999). This is
+the evidence behind the backfill design; if the API changes, re-verify here
+first.
 
 ## Historical timeseries that actually exist
 
@@ -61,10 +63,10 @@ can serve it retroactively.
 
 ## Gotchas (all handled in code, kept here so nobody re-discovers them)
 
-1. **`uniqueKey` vs `marketId`**: on blue-api the Market field is `marketId`;
-   `uniqueKey` is NOT queryable (it exists on the older api.morpho.org).
-   But the *filter* is `uniqueKey_in` and `marketById(marketId: ...)`.
-   Same 0x-hex value in all three places.
+1. **`uniqueKey` vs `marketId`**: the Market *field* is `marketId`, but the
+   *filter* is `uniqueKey_in` and the single-object query is
+   `marketById(marketId: ...)`. Same 0x-hex value in all three places.
+   (`uniqueKey` as a field only existed on a legacy REST-era endpoint.)
 2. **Complexity budget**: every query response carries
    `extensions.complexity`, capped at 1,000,000. List queries pay a huge
    fixed cost per timeseries field (~1M for one series via `markets(...)`),

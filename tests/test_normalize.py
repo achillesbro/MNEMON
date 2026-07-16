@@ -1,7 +1,8 @@
 """Normalization tests against recorded API responses (tests/fixtures/).
 
-The fixtures are real payloads from blue-api.morpho.org / coins.llama.fi /
-yields.llama.fi captured on 2026-07-09, trimmed for size."""
+The fixtures are real payloads from the Morpho GraphQL API (captured
+2026-07-09 via blue-api.morpho.org, now api.morpho.org — same API) and
+coins.llama.fi / yields.llama.fi, trimmed for size."""
 
 from datetime import datetime, timezone
 
