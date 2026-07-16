@@ -163,6 +163,7 @@ raw state):
 | `v_liquidity_risk`      | market | all-history `pct_time_gt95/99`, `avg_util_pct`, current util / APY-at-target |
 | `v_utilization_regime`  | market | trailing **7d/30d** utilization stats — the *current* regime |
 | `v_position_risk`       | market (current) | borrower count, debt, `min_hf`, debt share with HF < 1.05, top-3 concentration |
+| `v_vault_drift`         | reallocation event | every move of a market's vault share > 0.5pp: before/after weights, assets moved — newest first |
 | `v_prices`              | token × ts | price with the token `symbol` attached |
 | `v_price_returns`       | token × hour | hourly log-returns + rolling 7d/30d annualized vol |
 
@@ -203,20 +204,16 @@ QUALIFY log_return IS NOT NULL
 ORDER BY symbol, ts;
 ```
 
-Allocation drift per vault (hourly change in each market's share):
+Latest reallocations per vault (a live "what did the allocator just do" feed):
 
 ```sql
-WITH alloc AS (
-    SELECT ts, vault, market_id, supply_assets,
-           supply_assets / SUM(supply_assets) OVER (PARTITION BY vault, ts) AS weight
-    FROM v_vault_allocations
-    WHERE supply_assets IS NOT NULL
-)
-SELECT ts, vault, market_id, weight,
-       weight - LAG(weight) OVER (PARTITION BY vault, market_id ORDER BY ts) AS weight_change
-FROM alloc
-QUALIFY ABS(weight_change) > 0.01
-ORDER BY ts DESC;
+SELECT ts, collateral_symbol,
+       ROUND(prev_weight_pct, 1) AS w_before, ROUND(weight_pct, 1) AS w_after,
+       ROUND(weight_change_pct, 1) AS delta_pp, ROUND(supply_assets_change, 1) AS assets_moved
+FROM v_vault_drift
+WHERE vault = '0x4dc97f968b0ba4edd32d1b9b8aaf54776c134d42'
+ORDER BY ts DESC
+LIMIT 20;
 ```
 
 ## Consuming MNEMON from other projects
