@@ -17,6 +17,19 @@ The store is a directory of Parquet files (default `~/mnemon/data` on a Mac,
     r = MnemonReader("/path/to/mnemon/data")   # or set env MNEMON_DATA
     df = r.market_state_latest()               # pandas DataFrame
     df = r.sql("SELECT * FROM v_liquidity_risk ORDER BY pct_time_gt99 DESC")
+  Full MnemonReader API (every method returns a pandas DataFrame unless noted):
+    r.tables() -> list[str]                    # queryable tables + views
+    r.sql(query, params=None)                  # arbitrary SQL, `?` placeholders
+    r.market_state(loan=None, collateral=None, since=None)  # symbols, ISO date
+    r.market_state_latest()                    # newest row per market
+    r.liquidity_risk()                         # v_liquidity_risk, riskiest first
+    r.vault_snapshot(vault=None)               # current allocations per vault
+    r.vault_allocations(vault=None, since=None)
+    r.positions(market_id=None)
+    r.prices(symbol=None, since=None)
+    r.yield_pools(since=None)
+    r.refresh()                                # re-scan after new tables appear
+    r.close() / context manager supported
 - Raw DuckDB over the Parquet globs (any language with a DuckDB/Arrow client):
     SELECT * FROM read_parquet('<data>/market_state/*/*.parquet', hive_partitioning=1)
 
@@ -28,6 +41,16 @@ RULES:
   hourly (positions, backfill) snapshots. Fine for
   backtesting, scoring, and context. NOT a real-time feed — never use it as the
   trigger for on-chain actions; validate those against live chain state.
+
+## Freshness (how data gets here)
+
+A scheduler ticks every 5 minutes and runs whichever jobs are due:
+market_state 5 min | prices, vault_allocations 15 min | positions hourly |
+markets (dimension) daily | yield_pools 6 h | heal daily. `heal` re-pulls the
+last 48 h of hourly history and inserts only missing buckets, so upstream API
+outages self-repair at hourly granularity. New markets appear automatically
+when a tracked vault allocates into them (full hourly history backfilled).
+Worst-case staleness of any table = its cadence + a few seconds of run time.
 
 ## Conventions (apply to every table)
 
