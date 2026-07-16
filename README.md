@@ -231,10 +231,14 @@ from mnemon.reader import MnemonReader
 r = MnemonReader("/home/ubuntu/mnemon/data")   # or set MNEMON_DATA
 r.tables()                       # what's queryable
 r.market_state_latest()          # newest state row per market -> DataFrame
+r.market_state(collateral="kHYPE", since="2026-06-01")   # state timeseries
 r.liquidity_risk()               # per-market utilization risk
 r.vault_snapshot()               # current allocations, weights, cap usage
+r.vault_allocations(vault="0x4dC9...", since="2026-06-01")  # allocation history
+r.positions(market_id="0xc552...")   # borrower snapshots
 r.prices(symbol="kHYPE", since="2026-06-01")
-r.sql("SELECT * FROM v_prices WHERE symbol = ?", ["WHYPE"])   # arbitrary SQL
+r.yield_pools()                  # competing venue yields
+r.sql("SELECT * FROM v_vault_drift WHERE vault = ?", ["0x..."])  # arbitrary SQL
 ```
 
 `MnemonReader` reads the Parquet globs through its own in-memory DuckDB, so it
