@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 
 from mnemon.jobs.context import Context
+from mnemon.jobs.heal import job_heal
 from mnemon.jobs.market_state import job_market_state
 from mnemon.jobs.markets_dim import job_markets_dim
 from mnemon.jobs.positions import job_positions
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 
 # Order matters: markets_dim runs before dependents so a brand-new market has
 # its dimension row (decimals, symbols) before state rows reference it.
+# heal runs last: it patches whatever the live jobs (or past outages) missed.
 JOBS: dict[str, Callable[[Context], str]] = {
     "markets": job_markets_dim,
     "market_state": job_market_state,
@@ -30,6 +32,7 @@ JOBS: dict[str, Callable[[Context], str]] = {
     "prices": job_prices,
     "positions": job_positions,
     "yield_pools": job_yield_pools,
+    "heal": job_heal,
 }
 
 

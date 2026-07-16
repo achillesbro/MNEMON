@@ -67,8 +67,15 @@ Job cadences:
 | markets           | daily   | `markets`          | dimension: tokens, decimals, lltv, oracle; also triggers backfill of newly seen entities |
 | positions         | daily   | `positions`        | current borrower positions (accumulates forward) |
 | yield_pools       | daily   | `yield_pools`      | competing venue yields on tracked chains   |
+| heal              | daily   | (repairs the above)| re-pulls recent hourly history, inserts only missing buckets — outage gaps self-repair |
 
 Failures in one job never abort the others; logs rotate in `data/logs/`.
+
+If the Morpho API has an outage, the affected 15-min buckets are lost at
+15-min granularity, but the daily `heal` job re-pulls the last
+`heal_lookback_hours` (default 48) of hourly history and fills whatever is
+missing — never overwriting live rows. After a longer outage, widen the
+window once: `uv run python -m mnemon heal --hours 168`.
 
 ### Market discovery
 
@@ -85,6 +92,7 @@ uv run python -m mnemon run                  # run due jobs (what cron calls)
 uv run python -m mnemon run --only prices    # force specific jobs
 uv run python -m mnemon backfill             # backfill anything not yet backfilled
 uv run python -m mnemon backfill --force     # re-pull all history
+uv run python -m mnemon heal --hours 72      # fill outage gaps from hourly history
 uv run python -m mnemon check                # data-quality report: gaps, nulls, last runs
 uv run python -m mnemon migrate-legacy out/  # import old TS snapshot-*.json files
 uv run python -m mnemon init-db              # refresh DuckDB views only

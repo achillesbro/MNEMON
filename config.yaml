@@ -41,6 +41,13 @@ cadences:
   positions: 86400
   markets: 86400
   yield_pools: 86400
+  # Daily gap-repair: re-pulls recent hourly history and inserts only missing
+  # buckets, so upstream API outages don't leave permanent holes.
+  heal: 86400
+
+# Lookback window (hours) for the heal job. Must exceed the longest outage
+# you want auto-recovered; `python -m mnemon heal --hours N` overrides it.
+heal_lookback_hours: 48
 
 http:
   # Minimum delay between any two outgoing requests (shared across all APIs).

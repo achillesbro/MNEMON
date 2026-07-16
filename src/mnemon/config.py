@@ -43,6 +43,7 @@ class Cadences(BaseModel):
     positions: int = 86400
     markets: int = 86400
     yield_pools: int = 86400
+    heal: int = 86400
 
 
 class Config(BaseModel):
@@ -53,6 +54,10 @@ class Config(BaseModel):
     cadences: Cadences = Field(default_factory=Cadences)
     http: HttpConfig = Field(default_factory=HttpConfig)
     positions_max_pages: int = 50
+    # How far back the daily heal job re-pulls hourly history to fill gaps
+    # left by upstream outages. Must exceed the longest outage you want to
+    # recover from automatically; wider windows are idempotent but cost calls.
+    heal_lookback_hours: int = 48
 
     def chain(self, chain_id: int) -> ChainConfig:
         for c in self.chains:

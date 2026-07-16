@@ -59,6 +59,17 @@ class Store:
 
     def upsert(self, spec: TableSpec, rows: list[dict]) -> int:
         """Insert-or-replace rows keyed on spec.keys. Returns rows written."""
+        self._write(spec, rows, keep="last")
+        return len(rows)
+
+    def insert_missing(self, spec: TableSpec, rows: list[dict]) -> int:
+        """Insert only rows whose key is absent; existing rows always win.
+        Used by healing: backfilled hourly rows must never clobber live rows
+        (live rows carry oracle_price_raw, which history rows lack).
+        Returns the number of rows actually added."""
+        return self._write(spec, rows, keep="first")
+
+    def _write(self, spec: TableSpec, rows: list[dict], keep: str) -> int:
         if not rows:
             return 0
         df = _coerce(pd.DataFrame(rows), spec.schema)
@@ -66,28 +77,33 @@ class Store:
             raise ValueError(f"{spec.name}: null in ts/key column")
 
         if not spec.partitioned:
-            self._merge_file(spec, self.table_dir(spec) / "current.parquet", df)
-            return len(df)
+            return self._merge_file(spec, self.table_dir(spec) / "current.parquet", df, keep)
 
         # Split incoming rows by UTC day and merge each day file separately.
+        added = 0
         for day, day_df in df.groupby(df["ts"].dt.strftime("%Y-%m-%d")):
             path = self.table_dir(spec) / f"date={day}" / "part-0.parquet"
-            self._merge_file(spec, path, day_df)
-        return len(df)
+            added += self._merge_file(spec, path, day_df, keep)
+        return added
 
-    def _merge_file(self, spec: TableSpec, path: Path, new_df: pd.DataFrame) -> None:
+    def _merge_file(self, spec: TableSpec, path: Path, new_df: pd.DataFrame, keep: str) -> int:
+        """Merge new rows into one day file. `keep`: 'last' = new rows replace
+        existing keys (upsert), 'first' = existing keys win (insert-missing).
+        Returns the net number of rows added to the file."""
         if path.exists():
             existing = _coerce(pq.read_table(path).to_pandas(), spec.schema)
             merged = pd.concat([existing, new_df], ignore_index=True)
         else:
+            existing = None
             merged = new_df
-        merged = merged.drop_duplicates(subset=spec.keys, keep="last").sort_values(spec.keys)
+        merged = merged.drop_duplicates(subset=spec.keys, keep=keep).sort_values(spec.keys)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         table = pa.Table.from_pandas(merged, schema=spec.schema, preserve_index=False)
         tmp = path.with_suffix(".parquet.tmp")
         pq.write_table(table, tmp)
         tmp.replace(path)  # atomic on POSIX: readers never see a partial file
+        return len(merged) - (len(existing) if existing is not None else 0)
 
 
 def floor_ts(unix_ts: float, bucket_s: int) -> datetime:

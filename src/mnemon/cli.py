@@ -2,6 +2,7 @@
 
   run             run whichever jobs are due (cron calls this every 15 min)
   backfill        force the backfill pass (--force re-pulls everything)
+  heal            fill outage gaps with hourly history (--hours widens window)
   check           data-quality report (gaps, null rates, last successes)
   discover        print the currently tracked market set
   migrate-legacy  convert old out/snapshot-*.json files into legacy_snapshots
@@ -31,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_backfill = sub.add_parser("backfill", help="backfill history for tracked entities")
     p_backfill.add_argument("--force", action="store_true", help="clear backfill flags and re-pull")
+
+    p_heal = sub.add_parser("heal", help="fill gaps from upstream outages with hourly history")
+    p_heal.add_argument("--hours", type=int, default=None, help="lookback window (default: config heal_lookback_hours)")
 
     sub.add_parser("check", help="data-quality report")
     sub.add_parser("discover", help="print tracked markets")
@@ -86,6 +90,10 @@ def main(argv: list[str] | None = None) -> int:
             # The markets job refreshes the dimension and backfills anything
             # without a flag — exactly what an explicit backfill should do.
             results = run_due_jobs(ctx, only=["markets"])
+        elif args.command == "heal":
+            from mnemon.jobs.heal import job_heal
+
+            results = {"heal": job_heal(ctx, lookback_hours=args.hours)}
         else:  # run
             only = args.only.split(",") if args.only else None
             results = run_due_jobs(ctx, only=only)
