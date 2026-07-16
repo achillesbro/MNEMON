@@ -1,4 +1,4 @@
-"""Morpho GraphQL API client (https://blue-api.morpho.org/graphql).
+"""Morpho GraphQL API client (https://api.morpho.org/graphql).
 
 Field-naming gotchas discovered by introspection (see docs/SCHEMA_NOTES.md):
 - The Market id field is `marketId`, but the *filter* is `uniqueKey_in` and the
@@ -22,7 +22,9 @@ from mnemon.http import HttpClient
 
 log = logging.getLogger(__name__)
 
-API_URL = "https://blue-api.morpho.org/graphql"
+# Canonical endpoint since mid-2026; the old blue-api.morpho.org host serves
+# the same API but is legacy naming.
+API_URL = "https://api.morpho.org/graphql"
 
 
 class MorphoApiError(Exception):

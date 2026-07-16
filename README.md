@@ -14,7 +14,7 @@ returns etc. are computed in SQL from the raw series.
 
 ## Data sources (all free)
 
-1. **Morpho GraphQL API** (`blue-api.morpho.org/graphql`) — primary, incl.
+1. **Morpho GraphQL API** (`api.morpho.org/graphql`) — primary, incl.
    hourly historical backfill. See [docs/SCHEMA_NOTES.md](docs/SCHEMA_NOTES.md)
    for what historical fields actually exist (introspected, verified on
    HyperEVM) and the API's gotchas.
