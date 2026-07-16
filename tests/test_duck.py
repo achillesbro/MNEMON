@@ -45,6 +45,11 @@ def store(tmp_path):
             rate_at_target=9133578135, utilization=util, oracle_price_raw="68996150867968122500000000",
             api_timestamp=None, source="backfill")])
     s.upsert(VAULT_ALLOCATIONS, [
+        # hour 11: 50/50 split; hour 12 (TS): 75/25 -> one reallocation event
+        dict(ts=TS.replace(hour=11), chain_id=999, vault=VAULT, market_id=MID_A,
+             supply_assets=100_000_000, supply_shares=None, supply_cap=10_000_000_000, source="live"),
+        dict(ts=TS.replace(hour=11), chain_id=999, vault=VAULT, market_id=MID_IDLE,
+             supply_assets=100_000_000, supply_shares=None, supply_cap=10_000_000_000, source="live"),
         dict(ts=TS, chain_id=999, vault=VAULT, market_id=MID_A, supply_assets=300_000_000,
              supply_shares=None, supply_cap=10_000_000_000, source="live"),
         dict(ts=TS, chain_id=999, vault=VAULT, market_id=MID_IDLE, supply_assets=100_000_000,
@@ -84,7 +89,8 @@ def test_all_views_exist(con):
         "SELECT view_name FROM duckdb_views() WHERE NOT internal").fetchall()}
     assert {"v_market_state", "v_vault_allocations", "v_vault_snapshot",
             "v_liquidity_risk", "v_prices", "v_market_snapshot",
-            "v_position_risk", "v_utilization_regime", "v_price_returns"} <= views
+            "v_position_risk", "v_utilization_regime", "v_price_returns",
+            "v_vault_drift"} <= views
 
 
 def test_views_carry_full_ids(con):
@@ -136,6 +142,23 @@ def test_v_utilization_regime_windows(con):
     """, [MID_A]).fetchone()
     assert row[0] is None
     assert row[1] == pytest.approx(100.0)
+
+
+def test_v_vault_drift_emits_reallocation_events(con):
+    # fixture: 50/50 at hour 11 -> 75/25 at hour 12 = one +25pp and one -25pp event
+    rows = con.execute("""
+        SELECT market_id, prev_weight_pct, weight_pct, weight_change_pct, supply_assets_change
+        FROM v_vault_drift ORDER BY market_id
+    """).fetchall()
+    assert len(rows) == 2  # the hour-11 baseline rows themselves emit nothing (no LAG)
+    khype = next(r for r in rows if r[0] == MID_A)
+    assert khype[1] == pytest.approx(50.0)
+    assert khype[2] == pytest.approx(75.0)
+    assert khype[3] == pytest.approx(25.0)
+    assert khype[4] == pytest.approx(200.0)  # +200 USDT0 into the market
+    idle = next(r for r in rows if r[0] == MID_IDLE)
+    assert idle[3] == pytest.approx(-25.0)
+    assert idle[4] == pytest.approx(0.0)  # same assets, smaller share
 
 
 def test_v_price_returns_log_return_and_vol(con):

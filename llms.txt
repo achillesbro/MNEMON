@@ -112,6 +112,13 @@ current_apy_at_target_pct.
 ### v_prices  — prices with token symbol attached
 ts, chain_id, token_address, symbol, price_usd, source, confidence.
 
+### v_vault_drift  — reallocation event log (one row per material move)
+ts, chain_id, vault, market_id, loan_symbol, collateral_symbol,
+supply_assets (after, loan units), supply_assets_change, prev_weight_pct,
+weight_pct, weight_change_pct. Emits only |weight_change_pct| > 0.5pp so
+interest-accrual noise stays out; newest first. Cadence follows
+vault_allocations (15 min) — suits near-real-time feeds, not execution.
+
 ### v_market_snapshot  — one CURRENT row per market (the market screener)
 ts, chain_id, market_id, loan_symbol, collateral_symbol, loan_token,
 collateral_token, oracle, irm, creation_ts, listed, lltv, supply_assets,

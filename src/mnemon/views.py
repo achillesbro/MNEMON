@@ -144,6 +144,55 @@ DERIVED_VIEWS: list[DerivedView] = [
         """,
     ),
     DerivedView(
+        "v_vault_drift",
+        frozenset({"vault_allocations", "markets"}),
+        # Reallocation event log: one row per (vault, market, ts) where the
+        # market's share of the vault moved by more than 0.5pp since the
+        # previous observation — sized for a live "what did HEGEMON just do"
+        # feed. Interest accrual drifts weights a few bps per bucket; the
+        # 0.5pp floor keeps that noise out while catching real reallocations
+        # (consumers can filter harder on weight_change_pct). Newest first.
+        """
+        WITH alloc AS (
+            SELECT
+                va.ts,
+                va.chain_id,
+                va.vault,
+                va.market_id,
+                m.loan_symbol,
+                COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+                va.supply_assets::DOUBLE / POW(10, m.loan_decimals) AS supply_assets,
+                100.0 * va.supply_assets
+                    / NULLIF(SUM(va.supply_assets) OVER (PARTITION BY va.vault, va.ts), 0) AS weight_pct
+            FROM vault_allocations va
+            LEFT JOIN markets m USING (chain_id, market_id)
+            WHERE va.supply_assets IS NOT NULL
+        ),
+        d AS (
+            SELECT *,
+                LAG(weight_pct) OVER (PARTITION BY vault, market_id ORDER BY ts) AS prev_weight_pct,
+                supply_assets - LAG(supply_assets) OVER (PARTITION BY vault, market_id ORDER BY ts)
+                    AS supply_assets_change
+            FROM alloc
+        )
+        SELECT
+            ts,
+            chain_id,
+            vault,
+            market_id,
+            loan_symbol,
+            collateral_symbol,
+            supply_assets,
+            supply_assets_change,
+            prev_weight_pct,
+            weight_pct,
+            weight_pct - prev_weight_pct AS weight_change_pct
+        FROM d
+        WHERE ABS(weight_pct - prev_weight_pct) > 0.5
+        ORDER BY ts DESC
+        """,
+    ),
+    DerivedView(
         "v_market_snapshot",
         frozenset({"market_state", "markets"}),
         # One row per market: the newest state plus the full dimension — a
