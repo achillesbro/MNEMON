@@ -1,8 +1,8 @@
 # MNEMON — data store reference for LLMs / agents
 
 MNEMON is a local historical database of Morpho Blue lending data (markets,
-vault allocations, borrower positions, prices, competing yields). A cron job
-ingests state every 15 minutes into date-partitioned Parquet, queryable with
+vault allocations, borrower positions, prices, competing yields). A scheduled job
+ingests state every 5 minutes into date-partitioned Parquet, queryable with
 DuckDB. It stores RAW STATE and derives metrics at query time.
 
 Use this file as context when writing queries or code against a MNEMON store.
@@ -24,7 +24,8 @@ RULES:
 - Read-only. Read the Parquet globs (or use MnemonReader) — do NOT open the
   ingestion's `mnemon.duckdb` file from another process; the cron briefly locks
   it read-write every 15 min.
-- CADENCE: data is 15-min (live) / hourly (backfilled) snapshots. Fine for
+- CADENCE: data is 5-min (market_state) / 15-min (prices, vault_allocations) /
+  hourly (positions, backfill) snapshots. Fine for
   backtesting, scoring, and context. NOT a real-time feed — never use it as the
   trigger for on-chain actions; validate those against live chain state.
 
@@ -40,10 +41,13 @@ RULES:
 - Addresses are lowercased hex. `market_id` is the 0x-hex Morpho market key.
 - `source` column: `live` (15-min API), `backfill` (hourly history), `rpc` (chain fallback).
 - Markets are auto-discovered from tracked vault allocations; the set grows over time.
+- All id columns are stored COMPLETE (66-char market_id, 42-char addresses).
+  If they print truncated, that is pandas' display default:
+  pd.set_option("display.max_colwidth", None).
 
 ## Raw tables
 
-### market_state  — grain: (chain_id, market_id, ts); cadence: 15 min + hourly backfill
+### market_state  — grain: (chain_id, market_id, ts); cadence: 5 min + hourly backfill
 Raw market state over time.
 - ts, chain_id (int), market_id (str)
 - total_supply_assets, total_supply_shares, total_borrow_assets, total_borrow_shares (int base units)
@@ -58,24 +62,24 @@ Static-ish market metadata. Join target for symbols/decimals.
 - collateral_token, collateral_symbol, collateral_decimals (all null for IDLE markets)
 - oracle, irm, lltv (int WAD), creation_ts, listed (bool), fetched_at
 
-### vault_allocations  — grain: (chain_id, vault, market_id, ts); cadence: hourly
+### vault_allocations  — grain: (chain_id, vault, market_id, ts); cadence: 15 min
 How much each tracked vault supplies to each market.
 - ts, chain_id, vault (addr), market_id
 - supply_assets (int), supply_shares (int, null in backfilled rows), supply_cap (int), source
 
-### positions  — grain: (chain_id, market_id, borrower, ts); cadence: daily
+### positions  — grain: (chain_id, market_id, borrower, ts); cadence: hourly
 Current borrower positions, snapshotted forward (API serves current only; no
 history before tracking started).
 - ts, chain_id, market_id, borrower (addr)
 - collateral, borrow_shares, borrow_assets, supply_shares (int base units)
 - health_factor (float, nullable)
 
-### prices  — grain: (chain_id, token_address, ts); cadence: hourly
+### prices  — grain: (chain_id, token_address, ts); cadence: 15 min
 USD prices from DefiLlama (llama) with Morpho API fallback.
 - ts, chain_id, token_address (addr), price_usd (float)
 - source (`llama` | `llama_chart` | `morpho` | `morpho_history`), confidence (float, llama only)
 
-### yield_pools  — grain: (pool_id, ts); cadence: daily
+### yield_pools  — grain: (pool_id, ts); cadence: 6 h
 Competing venue yields (DefiLlama) on tracked chains.
 - ts, pool_id, chain, project, symbol, tvl_usd, apy, apy_base, apy_reward
 
@@ -107,6 +111,27 @@ current_apy_at_target_pct.
 
 ### v_prices  — prices with token symbol attached
 ts, chain_id, token_address, symbol, price_usd, source, confidence.
+
+### v_market_snapshot  — one CURRENT row per market (the market screener)
+ts, chain_id, market_id, loan_symbol, collateral_symbol, loan_token,
+collateral_token, oracle, irm, creation_ts, listed, lltv, supply_assets,
+borrow_assets, liquidity, utilization, apy_at_target, oracle_price.
+
+### v_position_risk  — per-market borrower risk (latest positions snapshot)
+chain_id, market_id, loan_symbol, collateral_symbol, ts, borrowers,
+total_borrow (loan units), min_hf, borrowers_hf_lt_105, debt_hf_lt_105,
+pct_debt_hf_lt_105 (share of debt within 5% of liquidation), top3_debt_pct
+(top-3 borrower concentration).
+
+### v_utilization_regime  — trailing 7d/30d utilization per market
+chain_id, market_id, loan_symbol, collateral_symbol, avg_util_7d/30d,
+pct_time_gt95_7d/30d, pct_time_gt99_7d/30d, current_util_pct,
+current_apy_at_target_pct. Windows evaluate at query time (always trailing).
+
+### v_price_returns  — hourly log-returns + rolling vol per token
+ts, chain_id, token_address, symbol, price_usd, log_return_1h, vol_7d_ann,
+vol_30d_ann (annualized from 1h returns; on-the-hour rows only, so a finer
+prices cadence does not change the return horizon).
 
 ## Example queries
 

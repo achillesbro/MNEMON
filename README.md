@@ -5,7 +5,7 @@ MYRMIDONS stack, feeding HEGEMON and EREBUS.)*
 
 A local, queryable, reproducible historical store of Morpho market data —
 the data layer for quantitative research on vault strategies (backtests,
-risk analysis). Python ingestion on a 15-min cron, Parquet storage
+risk analysis). Python ingestion on a 5-min scheduler, Parquet storage
 partitioned by date, queried via DuckDB.
 
 **Principle: store raw state, derive metrics at query time.** Asset/share
@@ -43,14 +43,14 @@ Subsequent runs are incremental and take seconds.
 
 ### Scheduling
 
-One entrypoint (`run_mnemon.sh`), invoked every 15 minutes; it internally
+One entrypoint (`run_mnemon.sh`), invoked every 5 minutes; it internally
 decides which jobs are due from the last-success timestamps in
 `data/mnemon_state.json`.
 
 **Local (macOS/Linux) via cron** — redirect output yourself:
 
 ```
-*/15 * * * * /path/to/mnemon/run_mnemon.sh >> /path/to/mnemon/data/logs/cron.log 2>&1
+*/5 * * * * /path/to/mnemon/run_mnemon.sh >> /path/to/mnemon/data/logs/cron.log 2>&1
 ```
 
 **On a VPS via systemd timer** — recommended for a remote box (logs to
@@ -61,13 +61,18 @@ Job cadences:
 
 | job               | cadence | table              | content                                   |
 |-------------------|---------|--------------------|-------------------------------------------|
-| market_state      | 15 min  | `market_state`     | raw totals, rateAtTarget, oracle price     |
-| vault_allocations | hourly  | `vault_allocations`| per-market supply + cap per vault          |
-| prices            | hourly  | `prices`           | USD prices (llama, morpho fallback)        |
+| market_state      | 5 min   | `market_state`     | raw totals, rateAtTarget, oracle price     |
+| vault_allocations | 15 min  | `vault_allocations`| per-market supply + cap per vault          |
+| prices            | 15 min  | `prices`           | USD prices (llama, morpho fallback)        |
+| positions         | hourly  | `positions`        | current borrower positions (accumulates forward) |
 | markets           | daily   | `markets`          | dimension: tokens, decimals, lltv, oracle; also triggers backfill of newly seen entities |
-| positions         | daily   | `positions`        | current borrower positions (accumulates forward) |
-| yield_pools       | daily   | `yield_pools`      | competing venue yields on tracked chains   |
+| yield_pools       | 6 h     | `yield_pools`      | competing venue yields on tracked chains   |
 | heal              | daily   | (repairs the above)| re-pulls recent hourly history, inserts only missing buckets — outage gaps self-repair |
+
+The scheduler tick (systemd timer / cron line) fires every 5 minutes — no
+cadence can be shorter than that. This is an analytics archive, not a live
+feed: anything that needs sub-minute state (liquidation triggers, execution
+checks) belongs in the consumer's own on-chain loop.
 
 Failures in one job never abort the others; logs rotate in `data/logs/`.
 
@@ -151,11 +156,19 @@ raw state):
 
 | view | one row per | gives you |
 |------|-------------|-----------|
-| `v_market_state`      | market × timestamp | supply/borrow/liquidity in token units, utilization, `apy_at_target`, `oracle_price` |
-| `v_vault_allocations` | vault × market × ts | supply & cap in token units over time |
-| `v_vault_snapshot`    | vault × market (current) | latest allocation with `weight_pct` and `cap_used_pct` |
-| `v_liquidity_risk`    | market | `pct_time_gt95/99`, `avg_util_pct`, and current util / APY-at-target |
-| `v_prices`            | token × ts | price with the token `symbol` attached |
+| `v_market_state`        | market × timestamp | supply/borrow/liquidity in token units, utilization, `apy_at_target`, `oracle_price` |
+| `v_market_snapshot`     | market (current) | newest state + full dimension in one row — the market screener |
+| `v_vault_allocations`   | vault × market × ts | supply & cap in token units over time |
+| `v_vault_snapshot`      | vault × market (current) | latest allocation with `weight_pct` and `cap_used_pct` |
+| `v_liquidity_risk`      | market | all-history `pct_time_gt95/99`, `avg_util_pct`, current util / APY-at-target |
+| `v_utilization_regime`  | market | trailing **7d/30d** utilization stats — the *current* regime |
+| `v_position_risk`       | market (current) | borrower count, debt, `min_hf`, debt share with HF < 1.05, top-3 concentration |
+| `v_prices`              | token × ts | price with the token `symbol` attached |
+| `v_price_returns`       | token × hour | hourly log-returns + rolling 7d/30d annualized vol |
+
+All id columns (`market_id`, `vault`, `token_address`) are stored complete —
+if they look truncated in a DataFrame print, that's pandas' 50-char display
+default: `pd.set_option("display.max_colwidth", None)`.
 
 ### Example queries
 
@@ -266,7 +279,7 @@ mnemon/
 ## Design notes
 
 - **Idempotent by construction**: every row's upsert key includes its
-  cadence bucket (`ts` floored to 15 min / hour / day). Re-runs merge into
+  cadence bucket (`ts` floored to 5 min / 15 min / hour / day). Re-runs merge into
   the day's Parquet file, replacing equal keys — gaps heal, nothing duplicates.
 - **Exact integers**: raw token/share amounts are DECIMAL(38,0) in Parquet
   (18-decimal shares overflow int64 and float64 loses precision). The raw

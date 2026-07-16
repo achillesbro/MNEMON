@@ -34,13 +34,18 @@ extra_markets: []
 
 # Job cadences in seconds. `python -m mnemon run` (cron every 15 min) runs
 # whichever jobs are due according to the last-success time in the state file.
+# NOTE: nothing can run more often than the scheduler fires — the systemd
+# timer (systemd/mnemon.timer) ticks every 5 minutes; cron users should match.
 cadences:
-  market_state: 900
-  prices: 3600
-  vault_allocations: 3600
-  positions: 86400
+  market_state: 300
+  prices: 900
+  vault_allocations: 900
+  # Full borrower book, hourly. Finer position tracking for near-liquidation
+  # monitoring belongs in the consumer's own live loop, not the archive.
+  positions: 3600
   markets: 86400
-  yield_pools: 86400
+  # yields.llama.fi/pools is one multi-MB dump — 4x/day is polite.
+  yield_pools: 21600
   # Daily gap-repair: re-pulls recent hourly history and inserts only missing
   # buckets, so upstream API outages don't leave permanent holes.
   heal: 86400

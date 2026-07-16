@@ -9,7 +9,7 @@
 #
 # Output goes to stdout/stderr: systemd captures it to journald, and cron
 # users should redirect it themselves, e.g.
-#   */15 * * * * /path/to/mnemon/run_mnemon.sh >> /path/to/mnemon/data/logs/cron.log 2>&1
+#   */5 * * * * /path/to/mnemon/run_mnemon.sh >> /path/to/mnemon/data/logs/cron.log 2>&1
 # (The app also writes its own rotating log to data/logs/mnemon.log.)
 set -eu
 

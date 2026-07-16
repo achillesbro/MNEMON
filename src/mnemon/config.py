@@ -35,14 +35,14 @@ class ExtraMarket(BaseModel):
 
 
 class Cadences(BaseModel):
-    """Seconds between runs of each job."""
+    """Seconds between runs of each job. Floor = scheduler tick (5 min)."""
 
-    market_state: int = 900
-    prices: int = 3600
-    vault_allocations: int = 3600
-    positions: int = 86400
+    market_state: int = 300
+    prices: int = 900
+    vault_allocations: int = 900
+    positions: int = 3600
     markets: int = 86400
-    yield_pools: int = 86400
+    yield_pools: int = 21600
     heal: int = 86400
 
 
