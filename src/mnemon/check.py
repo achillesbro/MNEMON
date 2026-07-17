@@ -32,7 +32,9 @@ def run_check(cfg: Config) -> str:
 
     lines.append("== last job success ==")
     state = MnemonState(cfg.state_path)
-    for job in ["markets", "market_state", "vault_allocations", "prices", "positions", "yield_pools"]:
+    from mnemon.jobs import JOBS  # single source of truth for the job list
+
+    for job in JOBS:
         ts = state.last_success(job)
         when = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if ts else "never"
         lines.append(f"  {job:20} {when}")
@@ -61,11 +63,17 @@ def run_check(cfg: Config) -> str:
         # last ts; actual = distinct buckets present. Difference = gaps.
         # Timestamps are formatted in SQL: duckdb needs pytz (not a dependency)
         # to materialize tz-aware timestamps into Python objects.
+        # expected = bucket count between first and last observation, inclusive.
+        # `//` (integer division) matters: `/` is float division in DuckDB and a
+        # rounding CAST would invent one phantom missing bucket whenever the
+        # newest row sits past the halfway point of its bucket.
         gaps = con.execute(f"""
             SELECT {ent},
                    STRFTIME(MIN(ts), '%Y-%m-%d') AS first_ts,
                    STRFTIME(MAX(ts), '%Y-%m-%d') AS last_ts,
-                   CAST(1 + DATE_DIFF('second', MIN(ts), MAX(ts)) / {bucket_s} AS BIGINT) AS expected,
+                   1 + DATE_DIFF('second',
+                                 TIME_BUCKET(INTERVAL '{bucket_s} seconds', MIN(ts)),
+                                 TIME_BUCKET(INTERVAL '{bucket_s} seconds', MAX(ts))) // {bucket_s} AS expected,
                    COUNT(DISTINCT TIME_BUCKET(INTERVAL '{bucket_s} seconds', ts)) AS actual
             FROM {rel}
             GROUP BY {ent}
