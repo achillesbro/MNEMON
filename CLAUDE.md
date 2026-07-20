@@ -101,6 +101,6 @@ jobs on the next tick. `uv` lives in `~/.local/bin` (not on the default ssh
 PATH). The HEGEMON V2 bot + its event sink and the V1 keeper (`/srv/HEGEMON`)
 share this VPS; MNEMON reads the sink directly from the filesystem.
 
-**Warning**: a directory named `MNEMON-main` on the operator's machine is a
-stale pre-refactor snapshot (no `.git`, no `views.py`/`heal`/`reader`). Never
-work there — clone this repo.
+On the operator's machine the working copy is `~/MNEMON-main` — since
+2026-07-20 it is a proper clone tracking `origin/main` (it was previously a
+stale gitless snapshot; that's fixed). Pull before working.
