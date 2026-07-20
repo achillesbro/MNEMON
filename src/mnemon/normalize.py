@@ -307,3 +307,106 @@ def yield_pool_rows(pools: list[dict], chains: set[str], ts: datetime) -> list[d
         for p in pools
         if p.get("chain") in chains
     ]
+
+
+# --- HEGEMON V2 bot events (JSONL sink) --------------------------------------
+
+
+def _iso_dt(iso: str) -> datetime:
+    """Parse the bot's ISO-8601 UTC timestamps (e.g. 2026-07-20T10:52:08.925Z)."""
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def bot_scores_rows(event: dict, source_file: str) -> list[dict]:
+    """One `scores` event -> one row per market. The tick ts is floored to a
+    60s bucket: coarse enough to dedupe re-emitted lines, far finer than the
+    30-min tick cadence so distinct ticks never collapse."""
+    ts = floor_ts(_iso_dt(event["ts"]).timestamp(), 60)
+    rows = []
+    for s in event.get("scores", []):
+        rows.append(
+            {
+                "ts": ts,
+                "chain_id": event.get("chainId"),
+                "vault": event.get("vault"),
+                "tick_id": event.get("tickId"),
+                "market_id": s.get("marketId"),
+                "collateral_symbol": s.get("collateralSymbol"),
+                "loan_symbol": s.get("loanSymbol"),
+                "u": s.get("u"),
+                "apy": s.get("apy"),
+                "exit_ratio": s.get("exitRatio"),
+                "score": s.get("score"),
+                "gate": s.get("gate"),
+                "vault_assets": as_int(s.get("vaultAssets")),
+                "total_assets": as_int(event.get("totalAssets")),
+                "idle_assets": as_int(event.get("idleAssets")),
+                "source_file": source_file,
+            }
+        )
+    return rows
+
+
+# Envelope fields; everything else is the event-specific payload (JSON column).
+_BOT_EVENT_ENVELOPE = {"ts", "bot", "chainId", "type", "tickId", "txHash"}
+
+
+def bot_event_row(event: dict, seq: int, source_file: str) -> dict:
+    """One non-`scores` event -> one bot_events row. `seq` is the line index
+    within the source file (stable emission order within a tick)."""
+    import json as _json
+
+    block = event.get("tx", {}).get("blockNumber") if isinstance(event.get("tx"), dict) else None
+    payload = {k: v for k, v in event.items() if k not in _BOT_EVENT_ENVELOPE}
+    return {
+        "ts": _iso_dt(event["ts"]),
+        "chain_id": event.get("chainId"),
+        "tick_id": event.get("tickId"),
+        "seq": seq,
+        "type": event.get("type"),
+        "tx_hash": event.get("txHash"),
+        "block_number": as_int(block),
+        "payload": _json.dumps(payload, sort_keys=True) if payload else None,
+        "source_file": source_file,
+    }
+
+
+# --- Vault V2 (vaultV2* API entities) ----------------------------------------
+
+
+def vault_v2_state_row(payload: dict, ts: datetime) -> dict:
+    return {
+        "ts": ts,
+        "chain_id": payload["chain"]["id"],
+        "vault": payload["address"].lower(),
+        "total_assets": as_int(payload.get("totalAssets")),
+        "idle_assets": as_int(payload.get("idleAssets")),
+        "total_supply": as_int(payload.get("totalSupply")),
+        "share_price": payload.get("sharePrice"),
+        "total_assets_usd": payload.get("totalAssetsUsd"),
+    }
+
+
+def vault_v2_flow_rows(items: list[dict]) -> list[dict]:
+    """vaultV2transactions items -> vault_v2_flows rows. Event-keyed on
+    (tx_hash, log_index); Deposit data has no receiver (onBehalf receives)."""
+    rows = []
+    for it in items:
+        data = it.get("data") or {}
+        rows.append(
+            {
+                "ts": _dt(int(it["timestamp"])),
+                "chain_id": it["vault"]["chain"]["id"],
+                "vault": it["vault"]["address"].lower(),
+                "block_number": as_int(it.get("blockNumber")),
+                "tx_hash": it["txHash"].lower(),
+                "log_index": it["logIndex"],
+                "type": it["type"],
+                "sender": (data.get("sender") or "").lower() or None,
+                "receiver": (data.get("receiver") or "").lower() or None,
+                "on_behalf": (data.get("onBehalf") or "").lower() or None,
+                "assets": as_int(it.get("assets")),
+                "shares": as_int(it.get("shares")),
+            }
+        )
+    return rows

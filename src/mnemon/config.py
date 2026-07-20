@@ -44,12 +44,20 @@ class Cadences(BaseModel):
     markets: int = 86400
     yield_pools: int = 21600
     heal: int = 86400
+    bot_events: int = 900
+    vault_v2_state: int = 3600
+    vault_v2_flows: int = 3600
 
 
 class Config(BaseModel):
     data_dir: Path
     chains: list[ChainConfig]
     vaults: list[VaultConfig]
+    # Morpho Vault V2 vaults (served by the vaultV2* API entities).
+    v2_vaults: list[VaultConfig] = Field(default_factory=list)
+    # Directory of HEGEMON V2 bot JSONL event files (events-YYYY-MM-DD.jsonl),
+    # the bind-mounted sink on the shared host. None disables the bot_events job.
+    hegemon_event_dir: Path | None = None
     extra_markets: list[ExtraMarket] = Field(default_factory=list)
     cadences: Cadences = Field(default_factory=Cadences)
     http: HttpConfig = Field(default_factory=HttpConfig)

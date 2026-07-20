@@ -328,7 +328,114 @@ DERIVED_VIEWS: list[DerivedView] = [
         FROM r
         """,
     ),
-]
+    DerivedView(
+        "v_market_apy",
+        frozenset({"market_state"}),
+        # Supply APY with exactly the HEGEMON bot's math (maths.ts):
+        # AdaptiveCurveIRM piecewise curve (steepness 4, target u 0.9) from
+        # rate_at_target, supplyRate = borrowRate * u * (1 - fee), 3-term
+        # Taylor compounding of rate*secondsPerYear. KNOWN GAP: market_state
+        # has no `fee` column so fee = 0 is assumed (tracked HyperEVM markets
+        # run fee = 0 today; see docs/SCHEMA_NOTES.md). Verified to 1e-12
+        # against a Python port of the bot math in tests/test_views_v2.py.
+        f"""
+        WITH base AS (
+            SELECT ts, chain_id, market_id,
+                   utilization                   AS u,
+                   rate_at_target::DOUBLE / 1e18 AS rat
+            FROM market_state
+            WHERE rate_at_target IS NOT NULL AND utilization IS NOT NULL
+        ), borrow AS (
+            SELECT *,
+                CASE
+                    WHEN u >= 1.0 THEN 4 * rat
+                    WHEN u >= 0.9 THEN rat + (4 * rat - rat) * (u - 0.9) / (1.0 - 0.9)
+                    WHEN u > 0    THEN rat / 4 + (rat - rat / 4) * u / 0.9
+                    ELSE rat / 4
+                END AS borrow_rate_per_sec
+            FROM base
+        ), rates AS (
+            SELECT *, borrow_rate_per_sec * u AS supply_rate_per_sec  -- * (1 - fee), fee unavailable
+            FROM borrow
+        )
+        SELECT ts, chain_id, market_id, u,
+               borrow_rate_per_sec,
+               (borrow_rate_per_sec * {SECONDS_PER_YEAR})
+                   + POW(borrow_rate_per_sec * {SECONDS_PER_YEAR}, 2) / 2
+                   + POW(borrow_rate_per_sec * {SECONDS_PER_YEAR}, 3) / 6 AS borrow_apy,
+               (supply_rate_per_sec * {SECONDS_PER_YEAR})
+                   + POW(supply_rate_per_sec * {SECONDS_PER_YEAR}, 2) / 2
+                   + POW(supply_rate_per_sec * {SECONDS_PER_YEAR}, 3) / 6 AS supply_apy
+        FROM rates
+        """,
+    ),
+    DerivedView(
+        "v_apy_spread",
+        frozenset({"market_state"}),  # selects from v_market_apy (created above)
+        """
+        SELECT ts, chain_id, market_id, supply_apy,
+               supply_apy - MAX(supply_apy) OVER (PARTITION BY chain_id, ts) AS spread_to_best
+        FROM v_market_apy
+        """,
+    ),
+    DerivedView(
+        "v_util_spells",
+        frozenset({"market_state"}),
+        # Gaps-and-islands: contiguous episodes of u >= threshold per market
+        # for the strategy's U_SAT (0.92) / U_CRIT (0.95). An episode breaks
+        # when u drops below the threshold or the series has a hole > 2h
+        # (backfilled portion is hourly). Episode identification only —
+        # statistical estimation belongs to the myrmidons Python library.
+        """
+        WITH thresholds(threshold) AS (VALUES (0.92), (0.95)),
+        flagged AS (
+            SELECT t.threshold, ms.chain_id, ms.market_id, ms.ts,
+                   ms.utilization AS u,
+                   (ms.total_supply_assets - ms.total_borrow_assets)::DOUBLE AS available_liquidity_raw,
+                   CASE WHEN ms.utilization >= t.threshold THEN 1 ELSE 0 END AS above
+            FROM market_state ms
+            CROSS JOIN thresholds t
+        ), runs AS (
+            SELECT *,
+                CASE WHEN above = 1
+                      AND (LAG(above) OVER w = 1)
+                      AND ts - LAG(ts) OVER w <= INTERVAL 2 HOUR
+                     THEN 0 ELSE 1 END AS is_start
+            FROM flagged
+            WINDOW w AS (PARTITION BY threshold, chain_id, market_id ORDER BY ts)
+        ), islands AS (
+            SELECT *,
+                SUM(is_start) OVER (
+                    PARTITION BY threshold, chain_id, market_id ORDER BY ts
+                ) AS spell_id
+            FROM runs
+            WHERE above = 1
+        )
+        SELECT chain_id, market_id, threshold,
+               MIN(ts)                               AS start_ts,
+               MAX(ts)                               AS end_ts,
+               DATE_DIFF('minute', MIN(ts), MAX(ts)) AS duration_min,
+               MAX(u)                                AS peak_u,
+               MIN(available_liquidity_raw)          AS min_available_liquidity
+        FROM islands
+        GROUP BY chain_id, market_id, threshold, spell_id
+        """,
+    ),
+    DerivedView(
+        "v_hegemon_benchmark",
+        frozenset({"market_state"}),  # selects from v_market_apy (created above)
+        # Passive counterfactuals per ts: equal-weight average APY and best
+        # single market. Comparison vs realized vault performance is downstream.
+        """
+        SELECT ts, chain_id,
+               AVG(supply_apy) AS equal_weight_apy,
+               MAX(supply_apy) AS best_market_apy,
+               COUNT(*)        AS markets
+        FROM v_market_apy
+        GROUP BY ts, chain_id
+        """,
+    ),]
+
 
 
 def create_derived_views(con, available: set[str]) -> list[str]:

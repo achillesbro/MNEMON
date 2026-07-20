@@ -52,3 +52,14 @@ class MnemonState:
 
     def cached_tracked(self) -> list[list]:
         return self._data["tracked"].get("markets", [])
+
+    # --- generic cursors -----------------------------------------------------
+    # Small JSON-serializable progress markers: byte offsets for file tailing
+    # (bot_events), last-seen timestamps for incremental API fetches
+    # (vault_v2_flows). Keys are namespaced strings like "botlog:<filename>".
+
+    def get_cursor(self, key: str, default=None):
+        return self._data.setdefault("cursors", {}).get(key, default)
+
+    def set_cursor(self, key: str, value) -> None:
+        self._data.setdefault("cursors", {})[key] = value

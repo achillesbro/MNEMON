@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import duckdb
 
 from mnemon.config import Config
-from mnemon.schemas import ALL_TABLES, MARKET_STATE, PRICES, VAULT_ALLOCATIONS
+from mnemon.schemas import ALL_TABLES, BOT_SCORES, MARKET_STATE, PRICES, VAULT_ALLOCATIONS
 from mnemon.state import MnemonState
 from mnemon.storage import Store
 
@@ -22,6 +22,9 @@ GAP_CHECKS = [
     (MARKET_STATE, ["chain_id", "market_id"], 3600),
     (VAULT_ALLOCATIONS, ["chain_id", "vault", "market_id"], 3600),
     (PRICES, ["chain_id", "token_address"], 3600),
+    # Bot ticks every 30 min; gaps that coincide with HEGEMON container
+    # recreates (deploys) are expected — flag, don't panic.
+    (BOT_SCORES, ["vault", "market_id"], 1800),
 ]
 
 

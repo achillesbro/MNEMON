@@ -164,6 +164,51 @@ query AssetPriceHistory($address: String!, $chainId: Int!, $opts: TimeseriesOpti
 """
 
 
+Q_VAULT_V2_STATE = """
+query VaultV2State($address: String!, $chainId: Int!) {
+  vaultV2ByAddress(address: $address, chainId: $chainId) {
+    address
+    chain { id }
+    totalAssets
+    totalAssetsUsd
+    idleAssets
+    totalSupply
+    sharePrice
+  }
+}
+"""
+
+# NB: orderBy enum is `Time` (not Timestamp); type_in excludes share Transfers.
+Q_VAULT_V2_TRANSACTIONS = """
+query VaultV2Transactions($vaults: [String!], $chainIds: [Int!], $sinceTs: Int, $first: Int!, $skip: Int!) {
+  vaultV2transactions(
+    first: $first
+    skip: $skip
+    orderBy: Time
+    orderDirection: Asc
+    where: { vaultAddress_in: $vaults, chainId_in: $chainIds, type_in: [Deposit, Withdraw], timestamp_gte: $sinceTs }
+  ) {
+    items {
+      txHash
+      logIndex
+      blockNumber
+      timestamp
+      type
+      assets
+      shares
+      vault { address chain { id } }
+      data {
+        __typename
+        ... on VaultV2DepositData { sender onBehalf }
+        ... on VaultV2WithdrawData { sender receiver onBehalf }
+      }
+    }
+    pageInfo { count countTotal }
+  }
+}
+"""
+
+
 class MorphoClient:
     def __init__(self, http: HttpClient) -> None:
         self._http = http
@@ -217,6 +262,32 @@ class MorphoClient:
             if data["pageInfo"]["count"] < 100:
                 return items
         log.warning("positions truncated at %d pages (%d rows)", max_pages, len(items))
+        return items
+
+    def vault_v2_state(self, address: str, chain_id: int) -> dict | None:
+        return self.query(Q_VAULT_V2_STATE, {"address": address, "chainId": chain_id})["vaultV2ByAddress"]
+
+    def vault_v2_transactions(
+        self, address: str, chain_id: int, since_ts: int = 0, max_pages: int = 50
+    ) -> list[dict]:
+        """Deposit/Withdraw events for a V2 vault since `since_ts` (inclusive),
+        oldest first. The API has full history, so backfill = since_ts 0."""
+        items: list[dict] = []
+        for page in range(max_pages):
+            data = self.query(
+                Q_VAULT_V2_TRANSACTIONS,
+                {
+                    "vaults": [address],
+                    "chainIds": [chain_id],
+                    "sinceTs": since_ts,
+                    "first": 100,
+                    "skip": page * 100,
+                },
+            )["vaultV2transactions"]
+            items.extend(data["items"])
+            if data["pageInfo"]["count"] < 100:
+                return items
+        log.warning("vault_v2_transactions truncated at %d pages (%d rows)", max_pages, len(items))
         return items
 
     def asset_prices(self, addresses: list[str], chain_ids: list[int]) -> list[dict]:

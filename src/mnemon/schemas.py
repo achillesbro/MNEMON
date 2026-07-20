@@ -165,7 +165,101 @@ LEGACY_SNAPSHOTS = TableSpec(
     keys=["chain_id", "market_id", "ts"],
 )
 
+BOT_SCORES = TableSpec(
+    name="bot_scores",
+    schema=pa.schema(
+        [
+            ("ts", TS),  # tick timestamp, floored to a 60s bucket (see jobs/bot_events.py)
+            ("chain_id", pa.int32()),
+            ("vault", pa.string()),
+            ("tick_id", pa.string()),
+            ("market_id", pa.string()),
+            ("collateral_symbol", pa.string()),
+            ("loan_symbol", pa.string()),
+            ("u", pa.float64()),  # utilization 0..1
+            ("apy", pa.float64()),  # supply APY, decimal (0.14 = 14%)
+            ("exit_ratio", pa.float64()),
+            ("score", pa.float64()),
+            ("gate", pa.string()),  # null when not gated
+            ("vault_assets", BIGINT),  # bot position in this market, asset units
+            ("total_assets", BIGINT),  # vault-level, denormalized per row
+            ("idle_assets", BIGINT),
+            ("source_file", pa.string()),
+        ]
+    ),
+    keys=["vault", "ts", "market_id"],
+)
+
+BOT_EVENTS = TableSpec(
+    name="bot_events",
+    schema=pa.schema(
+        [
+            ("ts", TS),  # event's own timestamp (not bucketed; keyed by tick_id+seq)
+            ("chain_id", pa.int32()),
+            ("tick_id", pa.string()),
+            ("seq", pa.int32()),  # line index within its source file (emission order)
+            ("type", pa.string()),
+            ("tx_hash", pa.string()),  # null unless a tx event
+            ("block_number", BIGINT),  # null unless tx_confirmed
+            ("payload", pa.string()),  # event-specific fields as JSON (plan, reason, gas, ...)
+            ("source_file", pa.string()),
+        ]
+    ),
+    keys=["tick_id", "seq"],
+)
+
+VAULT_V2_STATE = TableSpec(
+    name="vault_v2_state",
+    schema=pa.schema(
+        [
+            ("ts", TS),
+            ("chain_id", pa.int32()),
+            ("vault", pa.string()),
+            ("total_assets", BIGINT),
+            ("idle_assets", BIGINT),
+            ("total_supply", BIGINT),  # share supply (18-dec)
+            ("share_price", pa.float64()),  # assets per share, API float
+            ("total_assets_usd", pa.float64()),
+        ]
+    ),
+    keys=["chain_id", "vault", "ts"],
+)
+
+VAULT_V2_FLOWS = TableSpec(
+    name="vault_v2_flows",
+    schema=pa.schema(
+        [
+            ("ts", TS),  # block timestamp (event time, not bucketed)
+            ("chain_id", pa.int32()),
+            ("vault", pa.string()),
+            ("block_number", BIGINT),
+            ("tx_hash", pa.string()),
+            ("log_index", pa.int32()),
+            ("type", pa.string()),  # Deposit | Withdraw
+            ("sender", pa.string()),
+            ("receiver", pa.string()),  # null on deposits (onBehalf is the recipient)
+            ("on_behalf", pa.string()),
+            ("assets", BIGINT),
+            ("shares", BIGINT),
+        ]
+    ),
+    # First event-keyed table: identity is the on-chain event, not a clock bucket.
+    keys=["tx_hash", "log_index"],
+)
+
 ALL_TABLES: dict[str, TableSpec] = {
     t.name: t
-    for t in [MARKET_STATE, MARKETS, VAULT_ALLOCATIONS, POSITIONS, PRICES, YIELD_POOLS, LEGACY_SNAPSHOTS]
+    for t in [
+        MARKET_STATE,
+        MARKETS,
+        VAULT_ALLOCATIONS,
+        POSITIONS,
+        PRICES,
+        YIELD_POOLS,
+        LEGACY_SNAPSHOTS,
+        BOT_SCORES,
+        BOT_EVENTS,
+        VAULT_V2_STATE,
+        VAULT_V2_FLOWS,
+    ]
 }

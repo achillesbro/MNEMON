@@ -32,6 +32,16 @@ vaults:
 #     market_id: "0x..."
 extra_markets: []
 
+# Morpho Vault V2 vaults (vaultV2* API entities; used by vault_v2_state/_flows).
+v2_vaults:
+  - address: "0xB851D568d123077E787860a34da286255249d983"
+    chain_id: 999
+    label: myrmidons-usdt0-v2
+
+# HEGEMON V2 bot JSONL event sink (bind mount on the shared VPS host).
+# Absent/missing dir => bot_events job no-ops (fine for local dev).
+hegemon_event_dir: /home/ubuntu/HEGEMON_V2/data/events
+
 # Job cadences in seconds. `python -m mnemon run` (cron every 15 min) runs
 # whichever jobs are due according to the last-success time in the state file.
 # NOTE: nothing can run more often than the scheduler fires — the systemd
@@ -40,6 +50,9 @@ cadences:
   market_state: 300
   prices: 900
   vault_allocations: 900
+  bot_events: 900
+  vault_v2_state: 3600
+  vault_v2_flows: 3600
   # Full borrower book, hourly. Finer position tracking for near-liquidation
   # monitoring belongs in the consumer's own live loop, not the archive.
   positions: 3600

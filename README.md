@@ -68,6 +68,9 @@ Job cadences:
 | markets           | daily   | `markets`          | dimension: tokens, decimals, lltv, oracle; also triggers backfill of newly seen entities |
 | yield_pools       | 6 h     | `yield_pools`      | competing venue yields on tracked chains   |
 | heal              | daily   | (repairs the above)| re-pulls recent hourly history, inserts only missing buckets — outage gaps self-repair |
+| bot_events        | 15 min  | `bot_scores`, `bot_events` | HEGEMON V2 bot JSONL sink: full per-tick scored table + lifecycle events, byte-offset cursor per file |
+| vault_v2_state    | hourly  | `vault_v2_state`   | Vault V2 totals / share price (`vaultV2ByAddress`) |
+| vault_v2_flows    | hourly  | `vault_v2_flows`   | Vault V2 Deposit/Withdraw events keyed `(tx_hash, log_index)`; API has full history so backfill is inherent |
 
 The scheduler tick (systemd timer / cron line) fires every 5 minutes — no
 cadence can be shorter than that. This is an analytics archive, not a live
@@ -166,10 +169,18 @@ raw state):
 | `v_vault_drift`         | reallocation event | every move of a market's vault share > 0.5pp: before/after weights, assets moved — newest first |
 | `v_prices`              | token × ts | price with the token `symbol` attached |
 | `v_price_returns`       | token × hour | hourly log-returns + rolling 7d/30d annualized vol |
+| `v_market_apy`          | market × ts | supply/borrow APY derived with exactly the HEGEMON bot's math (AdaptiveCurveIRM from `rate_at_target`, Taylor-compounded; fee assumed 0 — see SCHEMA_NOTES) |
+| `v_apy_spread`          | market × ts | supply APY minus the best market's at that ts (0 = the leader) |
+| `v_util_spells`         | utilization episode | contiguous spells of u ≥ 0.92 / 0.95 per market: start/end, duration, peak u, min liquidity |
+| `v_hegemon_benchmark`   | ts | equal-weight avg APY + best single-market APY — passive counterfactuals for the vault |
 
 All id columns (`market_id`, `vault`, `token_address`) are stored complete —
 if they look truncated in a DataFrame print, that's pandas' 50-char display
 default: `pd.set_option("display.max_colwidth", None)`.
+
+Views are per-row algebraic derivation only; statistical estimation
+(percentiles, half-lives, parameter recommendations) belongs to the
+`myrmidons` Python library, not SQL.
 
 ### Example queries
 

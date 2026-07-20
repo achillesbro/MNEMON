@@ -107,3 +107,37 @@ can serve it retroactively.
 - AdaptiveCurveIRM: `0xD4a426F010986dCad727e8dd6eed44cA4A9b7483`
 - MYRMIDONS USDT0 vault: `0x4DC97f968B0Ba4Edd32D1b9B8Aaf54776c134d42`
 - MYRMIDONS WHYPE vault: `0x889d35426F44A06EE89adF1eC4E5A4C9EB50a4f1`
+
+## vaultV2transactions (introspected 2026-07-20, chain 999)
+
+Verified live for vault `0xB851D568d123077E787860a34da286255249d983`: full
+history from the first deposit (2026-07-17) is served — unlike bot logs, this
+source supports backfill.
+
+- Query: `vaultV2transactions(where, first, skip, orderBy, orderDirection)`.
+  **`orderBy` enum is `Time | Shares`** (not `Timestamp`). Filters:
+  `vaultAddress_in`, `userAddress_in`, `type_in`, `chainId_in`,
+  `timestamp_gte/lte`, `assets/shares_gte/lte`, `hash`, `cursor`.
+- Item fields: `txHash`, `logIndex`, `txIndex`, `blockNumber`, `timestamp`,
+  `type` (`Deposit | Withdraw | Transfer`), `assets`, `shares`,
+  `vault { address chain { id } }`, and a `data` union:
+  `VaultV2DepositData { assets sender onBehalf }` (no receiver — onBehalf
+  receives the shares) / `VaultV2WithdrawData { assets sender receiver
+  onBehalf }` / `VaultV2TransferData`.
+- Companion entities: `vaultV2ByAddress` (state: `totalAssets`, `idleAssets`,
+  `totalSupply`, `sharePrice`, `totalAssetsUsd` — fields sit directly on the
+  vault, no `state` wrapper) and `vaultV2AllocationTransactions` (unused so
+  far; candidate for a future `reallocations` table).
+
+## v_market_apy vs bot_scores.apy (cross-check)
+
+`v_market_apy` reimplements the bot's supply-APY derivation in SQL
+(AdaptiveCurveIRM `utilizationToRate`, steepness 4, target 0.9; 3-term Taylor
+compounding), verified to 1e-12 against a Python port in
+`tests/test_views_v2.py`. One systematic gap: `market_state` does not store
+the market `fee`, so the view assumes fee = 0 while the bot multiplies by
+`(1 − fee)`. Tracked HyperEVM markets currently run fee = 0, so the series
+agree; if a market enables a fee, the view overstates its supply APY by
+1/(1−fee) until a `fee` column is added. Residual sub-bp differences vs
+`bot_scores.apy` at the same wall-clock time are sampling skew (the bot reads
+the API at tick time; market_state samples on MNEMON's cadence).
