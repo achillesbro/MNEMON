@@ -92,6 +92,20 @@ query MarketsLiveState($ids: [String!], $chainIds: [Int!]) {
 }
 """
 
+# Every market on a chain (id + USD supply), for full-chain discovery. No
+# uniqueKey_in filter — lists the whole universe, paginated with first/skip.
+Q_ALL_MARKETS = """
+query AllMarkets($chainIds: [Int!], $first: Int!, $skip: Int!) {
+  markets(first: $first, skip: $skip, where: { chainId_in: $chainIds }) {
+    items {
+      marketId
+      state { supplyAssetsUsd }
+    }
+    pageInfo { count countTotal }
+  }
+}
+"""
+
 # All six raw-state series in one call: ~60k complexity for a year of hourly
 # data, safely under the 1M budget even for multi-year markets.
 Q_MARKET_HISTORY = """
@@ -230,6 +244,20 @@ class MorphoClient:
 
     def markets_live_state(self, market_ids: list[str], chain_ids: list[int]) -> list[dict]:
         return self._paged_markets(Q_MARKETS_LIVE_STATE, market_ids, chain_ids)
+
+    def all_markets(self, chain_id: int, page_size: int = 100, max_pages: int = 20) -> list[dict]:
+        """Every market on a chain: [{marketId, state:{supplyAssetsUsd}}], paged.
+        Used by full-chain discovery; max_pages caps a runaway loop."""
+        items: list[dict] = []
+        for page in range(max_pages):
+            batch = self.query(
+                Q_ALL_MARKETS,
+                {"chainIds": [chain_id], "first": page_size, "skip": page * page_size},
+            )["markets"]["items"]
+            items.extend(batch)
+            if len(batch) < page_size:
+                break
+        return items
 
     def _paged_markets(self, query: str, market_ids: list[str], chain_ids: list[int]) -> list[dict]:
         # `first: 100` covers current needs; chunk the id list to stay safe.

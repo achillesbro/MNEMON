@@ -32,6 +32,18 @@ vaults:
 #     market_id: "0x..."
 extra_markets: []
 
+# Chains to discover the FULL market universe on (every Morpho market above the
+# supply floor), not just what the vaults hold — powers the FE market analyser.
+# Empty = legacy vault-only behaviour.
+full_scan_chains: [999]
+# A full-scan market must have >= this much USD supply to be tracked (keeps
+# empty/dust markets out). Vault allocations + extra_markets ignore this floor.
+min_market_supply_usd: 1000
+# The hourly positions (borrower-book) job skips markets below this USD supply —
+# borrower risk is only worth pulling for markets of meaningful size. Markets
+# with unknown supply (vault/extra markets outside the scan) are always pulled.
+positions_min_supply_usd: 50000
+
 # Morpho Vault V2 vaults (vaultV2* API entities; used by vault_v2_state/_flows).
 v2_vaults:
   - address: "0xB851D568d123077E787860a34da286255249d983"

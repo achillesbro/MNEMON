@@ -63,6 +63,18 @@ class Config(BaseModel):
     # paths resolve against the config file; None defaults to <data_dir>/export.
     export_dir: Path | None = None
     extra_markets: list[ExtraMarket] = Field(default_factory=list)
+    # Chains to discover the FULL market universe on (not just vault
+    # allocations). Empty = legacy behaviour (track only what the vaults hold).
+    full_scan_chains: list[int] = Field(default_factory=list)
+    # Supply floor (USD) for a full-scan market to be tracked — keeps empty/dust
+    # markets out of the archive. Vault allocations + extra_markets are always
+    # tracked regardless of this floor.
+    min_market_supply_usd: float = 1000.0
+    # Supply floor (USD) below which the (heavy) positions job skips a market —
+    # borrower-risk is only worth pulling for markets of meaningful size.
+    # 0 = pull positions for every tracked market. Markets with unknown supply
+    # (vault/extra markets outside the full scan) are always included.
+    positions_min_supply_usd: float = 0.0
     cadences: Cadences = Field(default_factory=Cadences)
     http: HttpConfig = Field(default_factory=HttpConfig)
     positions_max_pages: int = 50

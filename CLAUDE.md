@@ -50,6 +50,14 @@ statistics, stop and leave a TODO.**
 - **check** command: per-table row counts/null rates automatically; gap
   detection via `GAP_CHECKS` in `check.py` (spec, entity cols, bucket seconds).
   The daily `heal` job re-pulls recent history to self-repair outage gaps.
+- **Discovery** (`discovery.py`): the tracked market set is derived each run =
+  vault allocations ∪ `extra_markets` ∪ (for each chain in `full_scan_chains`)
+  every market with supply ≥ `min_market_supply_usd` (added 2026-07-22 to widen
+  the archive from "what HEGEMON holds" to the whole chain, for the FE market
+  analyser). `discover_markets` also returns a `{(chain,market): supply_usd}`
+  map; the `positions` job uses it to skip markets below `positions_min_supply_usd`
+  (borrower books are the heaviest pull). Vault/extra markets are always tracked
+  and always get positions (unknown supply ⇒ treated as +inf).
 
 ## HEGEMON V2 pipeline (added 2026-07-20)
 

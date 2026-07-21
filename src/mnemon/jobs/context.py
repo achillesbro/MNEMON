@@ -25,12 +25,20 @@ class Context:
     state: MnemonState
     now: float = field(default_factory=time.time)
     _tracked: list[tuple[int, str]] | None = None
+    _supply_usd: dict[tuple[int, str], float] | None = None
 
     @property
     def tracked_markets(self) -> list[tuple[int, str]]:
         if self._tracked is None:
-            self._tracked = discover_markets(self.cfg, self.morpho, self.state)
+            self._tracked, self._supply_usd = discover_markets(self.cfg, self.morpho, self.state)
         return self._tracked
+
+    @property
+    def market_supply_usd(self) -> dict[tuple[int, str], float]:
+        """USD supply per market from the full scan (empty for vault-only runs)."""
+        if self._supply_usd is None:
+            _ = self.tracked_markets  # triggers discovery, populates the map
+        return self._supply_usd or {}
 
     def market_ids(self, chain_id: int) -> list[str]:
         return [m for c, m in self.tracked_markets if c == chain_id]
