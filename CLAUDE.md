@@ -121,6 +121,15 @@ hourly APY/util sparkline) and `util_spells.json` (`v_util_spells`, trailing
 by Caddy at `data.myrmidons-strategies.com` (see plan in
 `docs/FE_SURFACING_PLAN.md`); the FE consumes it, not the raw views.
 
+`market_health.json` schema_version 2 (added 2026-07-21) enriches each market
+with data from sibling views: `spread_to_best` (`v_apy_spread`), `oracle_price`
+(`v_market_snapshot`), `collateral_vol_7d/30d` (`v_price_returns`),
+`utilization_regime` (`v_utilization_regime`, all util fields divided by 100 →
+fractions) and `borrower_risk` (`v_position_risk` — merged in pandas, null when
+the `positions` table is absent or the market has no borrowers). All enrichment
+joins share `v_market_health`'s deps except positions, so the export never
+fails on a partial store; the FE treats every new field as optional (nullish).
+
 ## API gotchas (see docs/SCHEMA_NOTES.md for the full list)
 
 - `vaultV2transactions`: `orderBy` enum is `Time` (not `Timestamp`);

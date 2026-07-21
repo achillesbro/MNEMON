@@ -29,10 +29,17 @@ import pandas as pd
 from mnemon.jobs.context import Context
 from mnemon.reader import MnemonReader
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-# Latest row per market: v_market_health carries the classifier + USD sizing,
-# v_market_apy the bot-exact supply/borrow APY, markets the display symbols.
+# Latest row per market. Beyond the core health/APY/sizing, this enriches each
+# market with data already computed by other views (all share v_market_health's
+# deps except positions, joined separately in run_export):
+#   v_apy_spread        -> spread_to_best (bps below the best non-broken market)
+#   v_market_snapshot   -> oracle_price (1 collateral priced in loan units)
+#   v_price_returns     -> collateral annualized volatility (7d/30d)
+#   v_utilization_regime-> % of time pinned >95%/>99% + avg util (7d/30d)
+# Utilization-regime percentages are divided by 100 so every util/ratio field
+# in the export is a fraction — the FE formats them all the same way.
 # The 48h freshness cut is relative to the newest sample in the store (not wall
 # clock) so it behaves identically in tests and against a paused archive.
 _LATEST_SQL = """
@@ -41,6 +48,11 @@ WITH h AS (
            MAX(ts) OVER (PARTITION BY chain_id, market_id) AS mkt_max_ts,
            MAX(ts) OVER ()                                 AS global_max_ts
     FROM v_market_health
+),
+vol AS (  -- latest annualized volatility per token
+    SELECT chain_id, token_address, vol_7d_ann, vol_30d_ann
+    FROM v_price_returns
+    QUALIFY ts = MAX(ts) OVER (PARTITION BY chain_id, token_address)
 )
 SELECT
     h.chain_id,
@@ -56,15 +68,47 @@ SELECT
     h.supply_usd,
     h.available_usd,
     h.is_broken,
-    h.broken_reason
+    h.broken_reason,
+    sp.spread_to_best,
+    snap.oracle_price,
+    vol.vol_7d_ann  AS collateral_vol_7d,
+    vol.vol_30d_ann AS collateral_vol_30d,
+    ur.avg_util_7d       / 100 AS avg_util_7d,
+    ur.avg_util_30d      / 100 AS avg_util_30d,
+    ur.pct_time_gt95_7d  / 100 AS pct_time_gt95_7d,
+    ur.pct_time_gt95_30d / 100 AS pct_time_gt95_30d,
+    ur.pct_time_gt99_7d  / 100 AS pct_time_gt99_7d,
+    ur.pct_time_gt99_30d / 100 AS pct_time_gt99_30d
 FROM h
 LEFT JOIN v_market_apy a
        ON a.chain_id = h.chain_id AND a.market_id = h.market_id AND a.ts = h.ts
 LEFT JOIN markets m
        ON m.chain_id = h.chain_id AND m.market_id = h.market_id
+LEFT JOIN v_apy_spread sp
+       ON sp.chain_id = h.chain_id AND sp.market_id = h.market_id AND sp.ts = h.ts
+LEFT JOIN v_market_snapshot snap
+       ON snap.chain_id = h.chain_id AND snap.market_id = h.market_id
+LEFT JOIN v_utilization_regime ur
+       ON ur.chain_id = h.chain_id AND ur.market_id = h.market_id
+LEFT JOIN vol
+       ON vol.chain_id = h.chain_id AND vol.token_address = LOWER(m.collateral_token)
 WHERE h.ts = h.mkt_max_ts
   AND h.mkt_max_ts >= h.global_max_ts - INTERVAL 48 HOUR
 ORDER BY h.is_broken ASC, h.supply_usd DESC NULLS LAST
+"""
+
+# Borrower-book risk from the latest positions snapshot (v_position_risk needs
+# the `positions` table, which may be absent on a fresh store — merged only when
+# available). Percentages -> fractions; min_hf stays a ratio.
+_POSITION_RISK_SQL = """
+SELECT
+    chain_id, market_id,
+    borrowers,
+    min_hf,
+    borrowers_hf_lt_105,
+    pct_debt_hf_lt_105 / 100 AS pct_debt_hf_lt_105,
+    top3_debt_pct      / 100 AS top3_debt_pct
+FROM v_position_risk
 """
 
 # 7d hourly (minute=0) supply-APY/util sparkline per market, oldest first.
@@ -113,9 +157,14 @@ def run_export(reader: MnemonReader, export_dir: Path, generated_at: datetime) -
     n_markets = 0
 
     if {"v_market_health", "v_market_apy", "markets"} <= tables:
-        payload = build_market_health(
-            reader.sql(_LATEST_SQL), reader.sql(_HISTORY_SQL), generated_at
-        )
+        latest = reader.sql(_LATEST_SQL)
+        # Borrower risk needs the `positions` table; merge it in when present,
+        # otherwise those fields are simply absent (FE treats them as optional).
+        if "v_position_risk" in tables and not latest.empty:
+            latest = latest.merge(
+                reader.sql(_POSITION_RISK_SQL), on=["chain_id", "market_id"], how="left"
+            )
+        payload = build_market_health(latest, reader.sql(_HISTORY_SQL), generated_at)
         _write_json(export_dir / "market_health.json", payload)
         files += 1
         n_markets = len(payload["markets"])
@@ -137,30 +186,60 @@ def build_market_health(
             {"ts": _iso(row.ts), "supply_apy": _num(row.supply_apy), "u": _num(row.u)}
         )
 
+    # dict records (not itertuples) so optional columns — e.g. borrower risk when
+    # the positions table is absent — are simply missing rather than an error.
     markets = [
         {
-            "market_id": row.market_id,
-            "loan_symbol": _str(row.loan_symbol),
-            "collateral_symbol": _str(row.collateral_symbol),
-            "lltv": _num(row.lltv),
-            "ts": _iso(row.ts),
-            "utilization": _num(row.utilization),
-            "supply_apy": _num(row.supply_apy),
-            "borrow_apy": _num(row.borrow_apy),
-            "apy_at_target": _num(row.apy_at_target),
-            "supply_usd": _num(row.supply_usd),
-            "available_usd": _num(row.available_usd),
-            "is_broken": bool(row.is_broken),
-            "broken_reason": _str(row.broken_reason),
-            "history": hist_by_market.get(row.market_id, []),
+            "market_id": rec["market_id"],
+            "loan_symbol": _str(rec.get("loan_symbol")),
+            "collateral_symbol": _str(rec.get("collateral_symbol")),
+            "lltv": _num(rec.get("lltv")),
+            "ts": _iso(rec.get("ts")),
+            "utilization": _num(rec.get("utilization")),
+            "supply_apy": _num(rec.get("supply_apy")),
+            "borrow_apy": _num(rec.get("borrow_apy")),
+            "apy_at_target": _num(rec.get("apy_at_target")),
+            "supply_usd": _num(rec.get("supply_usd")),
+            "available_usd": _num(rec.get("available_usd")),
+            "is_broken": bool(rec.get("is_broken")),
+            "broken_reason": _str(rec.get("broken_reason")),
+            "spread_to_best": _num(rec.get("spread_to_best")),
+            "oracle_price": _num(rec.get("oracle_price")),
+            "collateral_vol_7d": _num(rec.get("collateral_vol_7d")),
+            "collateral_vol_30d": _num(rec.get("collateral_vol_30d")),
+            "utilization_regime": {
+                "avg_util_7d": _num(rec.get("avg_util_7d")),
+                "avg_util_30d": _num(rec.get("avg_util_30d")),
+                "pct_time_gt95_7d": _num(rec.get("pct_time_gt95_7d")),
+                "pct_time_gt95_30d": _num(rec.get("pct_time_gt95_30d")),
+                "pct_time_gt99_7d": _num(rec.get("pct_time_gt99_7d")),
+                "pct_time_gt99_30d": _num(rec.get("pct_time_gt99_30d")),
+            },
+            "borrower_risk": _borrower_risk(rec),
+            "history": hist_by_market.get(rec["market_id"], []),
         }
-        for row in latest.itertuples(index=False)
+        for rec in latest.to_dict("records")
     ]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _iso(generated_at),
         "chain_id": _sole_chain(latest),
         "markets": markets,
+    }
+
+
+def _borrower_risk(rec: dict) -> dict | None:
+    """Borrower-book summary, or None when this market has no positions data
+    (v_position_risk absent, or the market has no borrowers)."""
+    borrowers = rec.get("borrowers")
+    if borrowers is None or pd.isna(borrowers):
+        return None
+    return {
+        "borrowers": int(borrowers),
+        "min_hf": _num(rec.get("min_hf")),
+        "borrowers_hf_lt_105": _int(rec.get("borrowers_hf_lt_105")),
+        "pct_debt_hf_lt_105": _num(rec.get("pct_debt_hf_lt_105")),
+        "top3_debt_pct": _num(rec.get("top3_debt_pct")),
     }
 
 
@@ -219,6 +298,12 @@ def _num(v) -> float | None:
     if v is None or pd.isna(v):
         return None
     return float(v)
+
+
+def _int(v) -> int | None:
+    if v is None or pd.isna(v):
+        return None
+    return int(v)
 
 
 def _str(v) -> str | None:

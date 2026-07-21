@@ -17,7 +17,7 @@ import pytest
 
 from mnemon.jobs.export import build_util_spells, job_export, run_export
 from mnemon.reader import MnemonReader
-from mnemon.schemas import MARKET_STATE, MARKETS, PRICES
+from mnemon.schemas import MARKET_STATE, MARKETS, POSITIONS, PRICES
 from mnemon.storage import Store
 
 TS0 = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
@@ -93,6 +93,24 @@ def store(tmp_path) -> Store:
         "source": "test",
         "confidence": None,
     }])
+    # Borrower book for 0xgood: 3 borrowers, one within 5% of liquidation.
+    def _pos(borrower: str, borrow: int, hf: float) -> dict:
+        return {
+            "ts": TS0 + timedelta(hours=29),
+            "chain_id": 999,
+            "market_id": "0xgood",
+            "borrower": borrower,
+            "collateral": borrow * 2,
+            "borrow_shares": borrow,
+            "borrow_assets": borrow,
+            "supply_shares": 0,
+            "health_factor": hf,
+        }
+    s.upsert(POSITIONS, [
+        _pos("0xb1", 700_000, 1.02),   # near liquidation (HF < 1.05)
+        _pos("0xb2", 200_000, 1.60),
+        _pos("0xb3", 100_000, 2.50),
+    ])
     return s
 
 
@@ -118,7 +136,7 @@ def test_market_health_contract(store, tmp_path):
     job_export(_ctx(store, out))
     doc = _load(out / "market_health.json")
 
-    assert doc["schema_version"] == 1
+    assert doc["schema_version"] == 2
     assert doc["chain_id"] == 999
     assert doc["generated_at"].endswith("Z")
     by_id = {m["market_id"]: m for m in doc["markets"]}
@@ -138,6 +156,39 @@ def test_market_health_contract(store, tmp_path):
     assert by_id["0xpin"]["broken_reason"] == "pinned_util"
     assert by_id["0xdust"]["broken_reason"] == "dust"
     assert by_id["0xdust"]["collateral_symbol"] is None
+
+
+def test_market_health_enrichment(store, tmp_path):
+    out = tmp_path / "export"
+    job_export(_ctx(store, out))
+    by_id = {m["market_id"]: m for m in _load(out / "market_health.json")["markets"]}
+    good = by_id["0xgood"]
+
+    # spread_to_best present; the healthy market is the eligible leader (0 spread).
+    assert good["spread_to_best"] == pytest.approx(0.0, abs=1e-9)
+
+    # utilization_regime keys are always emitted. Values use now()-relative
+    # windows (query-time), so assert shape/range rather than exact numbers.
+    reg = good["utilization_regime"]
+    assert set(reg) == {
+        "avg_util_7d", "avg_util_30d",
+        "pct_time_gt95_7d", "pct_time_gt95_30d",
+        "pct_time_gt99_7d", "pct_time_gt99_30d",
+    }
+    assert all(v is None or 0.0 <= v <= 1.0 for v in reg.values())
+
+    # borrower_risk: 3 borrowers, one within 5% of liquidation; top-3 = 100%.
+    br = good["borrower_risk"]
+    assert br["borrowers"] == 3
+    assert br["min_hf"] == pytest.approx(1.02)
+    assert br["borrowers_hf_lt_105"] == 1
+    assert br["top3_debt_pct"] == pytest.approx(1.0)  # only 3 borrowers -> 100%
+    assert 0 < br["pct_debt_hf_lt_105"] <= 1
+
+    # Markets without a borrower book expose borrower_risk = null.
+    assert by_id["0xpin"]["borrower_risk"] is None
+    # Optional fields degrade to null, never missing keys.
+    assert "oracle_price" in good and "collateral_vol_7d" in good
 
 
 def test_market_health_sparkline(store, tmp_path):
@@ -165,7 +216,7 @@ def test_util_spells_contract(store, tmp_path):
     job_export(_ctx(store, out))
     doc = _load(out / "util_spells.json")
 
-    assert doc["schema_version"] == 1 and doc["chain_id"] == 999
+    assert doc["schema_version"] == 2 and doc["chain_id"] == 999
     pin = [s for s in doc["spells"] if s["market_id"] == "0xpin"]
     # Pinned market breaks both the 0.92 and 0.95 bands, both still open.
     assert {s["threshold"] for s in pin} == {0.92, 0.95}
@@ -191,7 +242,7 @@ def test_rerun_overwrites_atomically(store, tmp_path):
 
 def test_empty_spells_frame_shapes_cleanly():
     doc = build_util_spells(pd.DataFrame(columns=["chain_id"]), datetime(2026, 7, 21, tzinfo=timezone.utc))
-    assert doc["spells"] == [] and doc["chain_id"] is None and doc["schema_version"] == 1
+    assert doc["spells"] == [] and doc["chain_id"] is None and doc["schema_version"] == 2
 
 
 def test_run_export_skips_when_views_absent(tmp_path):
