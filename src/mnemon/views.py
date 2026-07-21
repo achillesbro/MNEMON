@@ -423,16 +423,22 @@ DERIVED_VIEWS: list[DerivedView] = [
     ),
     DerivedView(
         "v_hegemon_benchmark",
-        frozenset({"market_state"}),  # selects from v_market_apy (created above)
+        frozenset({"market_state", "bot_scores"}),  # selects from v_market_apy (created above)
         # Passive counterfactuals per ts: equal-weight average APY and best
-        # single market. Comparison vs realized vault performance is downstream.
+        # single market — restricted to the markets the HEGEMON bot actually
+        # scores (bot_scores), because market_state tracks every historical
+        # market including dust pinned at u~1.0 whose computed APY explodes
+        # into the thousands of percent; those would never pass the bot's
+        # gates and poison the counterfactual. Comparison vs realized vault
+        # performance is downstream.
         """
-        SELECT ts, chain_id,
-               AVG(supply_apy) AS equal_weight_apy,
-               MAX(supply_apy) AS best_market_apy,
-               COUNT(*)        AS markets
-        FROM v_market_apy
-        GROUP BY ts, chain_id
+        SELECT a.ts, a.chain_id,
+               AVG(a.supply_apy) AS equal_weight_apy,
+               MAX(a.supply_apy) AS best_market_apy,
+               COUNT(*)          AS markets
+        FROM v_market_apy a
+        WHERE a.market_id IN (SELECT DISTINCT market_id FROM bot_scores)
+        GROUP BY a.ts, a.chain_id
         """,
     ),]
 

@@ -15,7 +15,7 @@ import duckdb
 import pytest
 
 from mnemon.duck import refresh_views
-from mnemon.schemas import MARKET_STATE
+from mnemon.schemas import BOT_SCORES, MARKET_STATE
 from mnemon.storage import Store
 
 SECONDS_PER_YEAR = 31_536_000
@@ -68,6 +68,31 @@ def con(tmp_path):
     for i, u in enumerate([0.70, 0.75, 0.80, 0.78]):
         rows.append(_row("0xbbb", TS0 + timedelta(hours=i), u))
     store.upsert(MARKET_STATE, rows)
+    # v_hegemon_benchmark is restricted to bot-scored markets: seed both.
+    store.upsert(
+        BOT_SCORES,
+        [
+            {
+                "ts": TS0,
+                "chain_id": 999,
+                "vault": "0xv",
+                "tick_id": "t",
+                "market_id": m,
+                "collateral_symbol": None,
+                "loan_symbol": None,
+                "u": 0.9,
+                "apy": 0.1,
+                "exit_ratio": 1.0,
+                "score": 0.01,
+                "gate": None,
+                "vault_assets": 1,
+                "total_assets": 1,
+                "idle_assets": 0,
+                "source_file": "test",
+            }
+            for m in ("0xaaa", "0xbbb")
+        ],
+    )
     cfg = SimpleNamespace(duckdb_path=tmp_path / "t.duckdb")
     refresh_views(cfg, store)
     return duckdb.connect(str(cfg.duckdb_path))
