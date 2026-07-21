@@ -170,9 +170,10 @@ raw state):
 | `v_prices`              | token × ts | price with the token `symbol` attached |
 | `v_price_returns`       | token × hour | hourly log-returns + rolling 7d/30d annualized vol |
 | `v_market_apy`          | market × ts | supply/borrow APY derived with exactly the HEGEMON bot's math (AdaptiveCurveIRM from `rate_at_target`, Taylor-compounded; fee assumed 0 — see SCHEMA_NOTES) |
-| `v_apy_spread`          | market × ts | supply APY minus the best market's at that ts (0 = the leader) |
+| `v_market_health`       | market × ts | `is_broken` + reason, with hysteresis: rate-ratchet (apy_at_target >50% enter / <25% exit), pinned u≥0.999 for 24h (48h clean to exit), dust <$1k; thin-exemption <$25k so deep hot markets stay eligible |
+| `v_apy_spread`          | market × ts | supply APY minus the best **non-broken** market's at that ts (0 = the leader), `is_broken` flagged |
 | `v_util_spells`         | utilization episode | contiguous spells of u ≥ 0.92 / 0.95 per market: start/end, duration, peak u, min liquidity |
-| `v_hegemon_benchmark`   | ts | equal-weight avg APY + best single-market APY — passive counterfactuals for the vault |
+| `v_hegemon_benchmark`   | ts | passive counterfactuals over the eligible (non-broken) universe AND over the bot's own scored set; `opportunity_gap_apy` = best eligible − best bot market |
 
 All id columns (`market_id`, `vault`, `token_address`) are stored complete —
 if they look truncated in a DataFrame print, that's pandas' 50-char display

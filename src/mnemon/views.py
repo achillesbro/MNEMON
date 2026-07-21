@@ -370,12 +370,86 @@ DERIVED_VIEWS: list[DerivedView] = [
         """,
     ),
     DerivedView(
-        "v_apy_spread",
-        frozenset({"market_state"}),  # selects from v_market_apy (created above)
+        "v_market_health",
+        frozenset({"market_state", "markets", "prices"}),
+        # Broken-market classifier with hysteresis (operator-tuned constants):
+        #   R1 ratchet: apy_at_target > 50% -> broken, exit < 25%. The
+        #      AdaptiveCurveIRM ratchets rateAtTarget ~2x per ~5 days pinned at
+        #      u=1 (and decays symmetrically), so this threshold is inherently
+        #      time-integrated — no extra dwell needed.
+        #   R2 pinned: u >= 0.999 for the entire trailing 24h -> broken, exit
+        #      after 48h entirely below 0.95. Span guards avoid false
+        #      positives across data holes.
+        #   R3 dust: supply < $1k USD -> broken unconditionally.
+        #   Thin exemption: R1/R2 only apply while supply < $25k USD — a DEEP
+        #      market sustaining a high ratcheted rate is an opportunity, not
+        #      a defect. Unpriced markets are treated as thin (rules apply)
+        #      but never dust (can't prove size).
+        # State machine = enter/exit events + LAST_VALUE(... IGNORE NULLS).
+        # Fixed-rule algebra only; data-driven thresholds belong to myrmidons.
         """
-        SELECT ts, chain_id, market_id, supply_apy,
-               supply_apy - MAX(supply_apy) OVER (PARTITION BY chain_id, ts) AS spread_to_best
-        FROM v_market_apy
+        WITH priced AS (
+            SELECT
+                ms.ts, ms.chain_id, ms.market_id, ms.utilization AS u,
+                EXP(ms.rate_at_target::DOUBLE / 1e18 * 31536000) - 1 AS apy_at_target,
+                ms.total_supply_assets::DOUBLE / POW(10, m.loan_decimals)
+                    * p.price_usd AS supply_usd
+            FROM market_state ms
+            LEFT JOIN markets m USING (chain_id, market_id)
+            ASOF LEFT JOIN prices p
+                ON p.chain_id = ms.chain_id
+               AND p.token_address = LOWER(m.loan_token)
+               AND p.ts <= ms.ts
+        ), events AS (
+            SELECT *,
+                COALESCE(supply_usd < 25000, TRUE)  AS is_thin,
+                COALESCE(supply_usd < 1000, FALSE)  AS is_dust,
+                CASE WHEN apy_at_target > 0.50 THEN 1
+                     WHEN apy_at_target < 0.25 THEN 0
+                END AS r1_event,
+                CASE WHEN MIN(CASE WHEN u >= 0.999 THEN 1 ELSE 0 END) OVER w24 = 1
+                          AND ts - MIN(ts) OVER w24 >= INTERVAL 22 HOUR THEN 1
+                     WHEN MAX(u) OVER w48 < 0.95
+                          AND ts - MIN(ts) OVER w48 >= INTERVAL 44 HOUR THEN 0
+                END AS r2_event
+            FROM priced
+            WINDOW
+                w24 AS (PARTITION BY chain_id, market_id ORDER BY ts
+                        RANGE BETWEEN INTERVAL 24 HOUR PRECEDING AND CURRENT ROW),
+                w48 AS (PARTITION BY chain_id, market_id ORDER BY ts
+                        RANGE BETWEEN INTERVAL 48 HOUR PRECEDING AND CURRENT ROW)
+        ), states AS (
+            SELECT *,
+                COALESCE(LAST_VALUE(r1_event IGNORE NULLS) OVER cum, 0) = 1 AS r1_state,
+                COALESCE(LAST_VALUE(r2_event IGNORE NULLS) OVER cum, 0) = 1 AS r2_state
+            FROM events
+            WINDOW cum AS (PARTITION BY chain_id, market_id ORDER BY ts
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        )
+        SELECT
+            ts, chain_id, market_id, u, apy_at_target, supply_usd,
+            is_dust OR ((r1_state OR r2_state) AND is_thin) AS is_broken,
+            CASE WHEN is_dust THEN 'dust'
+                 WHEN r1_state AND is_thin THEN 'rate_ratchet'
+                 WHEN r2_state AND is_thin THEN 'pinned_util'
+            END AS broken_reason
+        FROM states
+        """,
+    ),
+    DerivedView(
+        "v_apy_spread",
+        frozenset({"market_state", "markets", "prices"}),  # via v_market_apy + v_market_health
+        # spread_to_best is measured against the best NON-BROKEN market at
+        # that ts (else a dust market's exploded APY poisons every spread).
+        # Broken rows keep their spread vs the eligible leader, flagged.
+        """
+        SELECT a.ts, a.chain_id, a.market_id, a.supply_apy,
+               COALESCE(h.is_broken, FALSE) AS is_broken,
+               a.supply_apy - MAX(a.supply_apy)
+                   FILTER (NOT COALESCE(h.is_broken, FALSE))
+                   OVER (PARTITION BY a.chain_id, a.ts) AS spread_to_best
+        FROM v_market_apy a
+        LEFT JOIN v_market_health h USING (ts, chain_id, market_id)
         """,
     ),
     DerivedView(
@@ -423,25 +497,35 @@ DERIVED_VIEWS: list[DerivedView] = [
     ),
     DerivedView(
         "v_hegemon_benchmark",
-        frozenset({"market_state", "bot_scores"}),  # selects from v_market_apy (created above)
-        # Passive counterfactuals per ts: equal-weight average APY and best
-        # single market — restricted to the markets the HEGEMON bot actually
-        # scores (bot_scores), because market_state tracks every historical
-        # market including dust pinned at u~1.0 whose computed APY explodes
-        # into the thousands of percent; those would never pass the bot's
-        # gates and poison the counterfactual. Comparison vs realized vault
-        # performance is downstream.
+        frozenset({"market_state", "markets", "prices", "bot_scores"}),
+        # Passive counterfactuals per ts over the ELIGIBLE universe (every
+        # non-broken market, per v_market_health — not just where HEGEMON
+        # allocates, to avoid the echo chamber), plus the same aggregates over
+        # the bot's own scored set. opportunity_gap_apy > 0 means a better
+        # market existed outside the bot's set at that ts.
         """
-        SELECT a.ts, a.chain_id,
-               AVG(a.supply_apy) AS equal_weight_apy,
-               MAX(a.supply_apy) AS best_market_apy,
-               COUNT(*)          AS markets
-        FROM v_market_apy a
-        WHERE a.market_id IN (SELECT DISTINCT market_id FROM bot_scores)
-        GROUP BY a.ts, a.chain_id
+        WITH scored AS (SELECT DISTINCT market_id FROM bot_scores),
+        joined AS (
+            SELECT a.ts, a.chain_id, a.market_id, a.supply_apy,
+                   COALESCE(h.is_broken, FALSE) AS is_broken,
+                   a.market_id IN (SELECT market_id FROM scored) AS in_bot_set
+            FROM v_market_apy a
+            LEFT JOIN v_market_health h USING (ts, chain_id, market_id)
+        )
+        SELECT ts, chain_id,
+               AVG(supply_apy) FILTER (NOT is_broken)              AS equal_weight_apy,
+               MAX(supply_apy) FILTER (NOT is_broken)              AS best_market_apy,
+               COUNT(*)        FILTER (NOT is_broken)              AS markets,
+               AVG(supply_apy) FILTER (in_bot_set)                 AS bot_equal_weight_apy,
+               MAX(supply_apy) FILTER (in_bot_set)                 AS bot_best_apy,
+               COUNT(*)        FILTER (in_bot_set)                 AS bot_markets,
+               MAX(supply_apy) FILTER (NOT is_broken)
+                   - MAX(supply_apy) FILTER (in_bot_set)           AS opportunity_gap_apy
+        FROM joined
+        GROUP BY ts, chain_id
         """,
-    ),]
-
+    ),
+]
 
 
 def create_derived_views(con, available: set[str]) -> list[str]:

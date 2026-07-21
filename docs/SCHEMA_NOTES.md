@@ -141,3 +141,25 @@ agree; if a market enables a fee, the view overstates its supply APY by
 1/(1−fee) until a `fee` column is added. Residual sub-bp differences vs
 `bot_scores.apy` at the same wall-clock time are sampling skew (the bot reads
 the API at tick time; market_state samples on MNEMON's cadence).
+
+## Broken-market classification (v_market_health, added 2026-07-21)
+
+Operator-tuned fixed rules (algebra only; data-driven thresholds would belong
+to the myrmidons library):
+- **rate_ratchet**: `apy_at_target > 50%` enters broken, `< 25%` exits. The
+  AdaptiveCurveIRM ratchets rateAtTarget ~2x per ~5 days pinned at u=1 and
+  decays symmetrically, so this threshold is inherently time-integrated —
+  the IRM is the hysteresis.
+- **pinned_util**: u ≥ 0.999 across the entire trailing 24h enters, 48h fully
+  below 0.95 exits (span guards against data holes).
+- **dust**: supply < $1k USD (ASOF-joined `prices`) — broken unconditionally.
+- **Thin exemption**: ratchet/pinned only classify when supply < $25k USD; a
+  deep market sustaining a high rate is an opportunity, not a defect.
+  Unpriced markets: treated as thin (rules apply) but never dust.
+
+Live calibration (2026-07-21): broken set = PT-hbUSDT ($1, 639% ratchet),
+UBTC-dust ($8, 639%), kHYPE-old ($93, 258%, 84% of 30d pinned), wstHYPE
+($3.6k, 72%), beHYPE/WHYPE ($3 supply, pinned) — nothing legitimate sits
+between 22% and 72% apy_at_target. `v_hegemon_benchmark` aggregates the
+eligible universe vs the bot's scored set; `opportunity_gap_apy` is the
+echo-chamber antidote.
