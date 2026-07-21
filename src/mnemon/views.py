@@ -393,7 +393,9 @@ DERIVED_VIEWS: list[DerivedView] = [
                 ms.ts, ms.chain_id, ms.market_id, ms.utilization AS u,
                 EXP(ms.rate_at_target::DOUBLE / 1e18 * 31536000) - 1 AS apy_at_target,
                 ms.total_supply_assets::DOUBLE / POW(10, m.loan_decimals)
-                    * p.price_usd AS supply_usd
+                    * p.price_usd AS supply_usd,
+                (ms.total_supply_assets - ms.total_borrow_assets)::DOUBLE
+                    / POW(10, m.loan_decimals) * p.price_usd AS available_usd
             FROM market_state ms
             LEFT JOIN markets m USING (chain_id, market_id)
             ASOF LEFT JOIN prices p
@@ -427,7 +429,7 @@ DERIVED_VIEWS: list[DerivedView] = [
                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
         )
         SELECT
-            ts, chain_id, market_id, u, apy_at_target, supply_usd,
+            ts, chain_id, market_id, u, apy_at_target, supply_usd, available_usd,
             is_dust OR ((r1_state OR r2_state) AND is_thin) AS is_broken,
             CASE WHEN is_dust THEN 'dust'
                  WHEN r1_state AND is_thin THEN 'rate_ratchet'
@@ -501,13 +503,18 @@ DERIVED_VIEWS: list[DerivedView] = [
         # Passive counterfactuals per ts over the ELIGIBLE universe (every
         # non-broken market, per v_market_health — not just where HEGEMON
         # allocates, to avoid the echo chamber), plus the same aggregates over
-        # the bot's own scored set. opportunity_gap_apy > 0 means a better
-        # market existed outside the bot's set at that ts.
+        # the bot's own scored set, plus the INVESTABLE tier — eligible AND
+        # available liquidity >= $10k USD (the bot's minAvailableLiquidity
+        # floor): the "deployable truth". opportunity_gap_apy compares the
+        # whole universe; deployable_gap_apy compares only markets the bot
+        # could actually enter at size.
         """
         WITH scored AS (SELECT DISTINCT market_id FROM bot_scores),
         joined AS (
             SELECT a.ts, a.chain_id, a.market_id, a.supply_apy,
                    COALESCE(h.is_broken, FALSE) AS is_broken,
+                   NOT COALESCE(h.is_broken, FALSE)
+                       AND COALESCE(h.available_usd >= 10000, FALSE) AS investable,
                    a.market_id IN (SELECT market_id FROM scored) AS in_bot_set
             FROM v_market_apy a
             LEFT JOIN v_market_health h USING (ts, chain_id, market_id)
@@ -516,11 +523,16 @@ DERIVED_VIEWS: list[DerivedView] = [
                AVG(supply_apy) FILTER (NOT is_broken)              AS equal_weight_apy,
                MAX(supply_apy) FILTER (NOT is_broken)              AS best_market_apy,
                COUNT(*)        FILTER (NOT is_broken)              AS markets,
+               AVG(supply_apy) FILTER (investable)                 AS investable_equal_weight_apy,
+               MAX(supply_apy) FILTER (investable)                 AS investable_best_apy,
+               COUNT(*)        FILTER (investable)                 AS investable_markets,
                AVG(supply_apy) FILTER (in_bot_set)                 AS bot_equal_weight_apy,
                MAX(supply_apy) FILTER (in_bot_set)                 AS bot_best_apy,
                COUNT(*)        FILTER (in_bot_set)                 AS bot_markets,
                MAX(supply_apy) FILTER (NOT is_broken)
-                   - MAX(supply_apy) FILTER (in_bot_set)           AS opportunity_gap_apy
+                   - MAX(supply_apy) FILTER (in_bot_set)           AS opportunity_gap_apy,
+               MAX(supply_apy) FILTER (investable)
+                   - MAX(supply_apy) FILTER (in_bot_set)           AS deployable_gap_apy
         FROM joined
         GROUP BY ts, chain_id
         """,

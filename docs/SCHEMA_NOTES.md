@@ -160,6 +160,9 @@ to the myrmidons library):
 Live calibration (2026-07-21): broken set = PT-hbUSDT ($1, 639% ratchet),
 UBTC-dust ($8, 639%), kHYPE-old ($93, 258%, 84% of 30d pinned), wstHYPE
 ($3.6k, 72%), beHYPE/WHYPE ($3 supply, pinned) — nothing legitimate sits
-between 22% and 72% apy_at_target. `v_hegemon_benchmark` aggregates the
-eligible universe vs the bot's scored set; `opportunity_gap_apy` is the
-echo-chamber antidote.
+between 22% and 72% apy_at_target. `v_hegemon_benchmark` aggregates three tiers: the eligible universe, the
+**investable** subset (eligible AND available liquidity ≥ $10k USD — mirrors
+the bot's minAvailableLiquidity floor; `v_market_health.available_usd`), and
+the bot's scored set. `opportunity_gap_apy` (universe) is the echo-chamber
+antidote; `deployable_gap_apy` (investable) is the actionable version — a
+market paying 40% with $79 of depth inflates the former but not the latter.

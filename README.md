@@ -173,7 +173,7 @@ raw state):
 | `v_market_health`       | market × ts | `is_broken` + reason, with hysteresis: rate-ratchet (apy_at_target >50% enter / <25% exit), pinned u≥0.999 for 24h (48h clean to exit), dust <$1k; thin-exemption <$25k so deep hot markets stay eligible |
 | `v_apy_spread`          | market × ts | supply APY minus the best **non-broken** market's at that ts (0 = the leader), `is_broken` flagged |
 | `v_util_spells`         | utilization episode | contiguous spells of u ≥ 0.92 / 0.95 per market: start/end, duration, peak u, min liquidity |
-| `v_hegemon_benchmark`   | ts | passive counterfactuals over the eligible (non-broken) universe AND over the bot's own scored set; `opportunity_gap_apy` = best eligible − best bot market |
+| `v_hegemon_benchmark`   | ts | passive counterfactuals over three tiers: eligible (non-broken) universe, **investable** (eligible + available liquidity ≥ $10k, the bot's floor — the deployable truth), and the bot's own scored set; `opportunity_gap_apy` (universe) and `deployable_gap_apy` (investable) vs best bot market |
 
 All id columns (`market_id`, `vault`, `token_address`) are stored complete —
 if they look truncated in a DataFrame print, that's pandas' 50-char display

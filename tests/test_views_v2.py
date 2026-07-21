@@ -248,3 +248,16 @@ def test_benchmark_excludes_broken_and_reports_gap(con):
     assert bot_markets == 0  # bot set (0xaaa/0xbbb) has no rows at TSH
     assert markets >= 2  # dust excluded from eligible
     assert bot_best is None and gap is None
+
+
+def test_benchmark_investable_tier(con):
+    row = con.execute(
+        "SELECT markets, investable_markets, investable_best_apy "
+        "FROM v_hegemon_benchmark WHERE ts = ?",
+        [TSH],
+    ).fetchone()
+    markets, inv_markets, inv_best = row
+    # Only 0xdeep ($100k supply, u=0.5 -> $50k available) clears the $10k
+    # available-liquidity floor; 0xr1/0xpin ($5k supply) and 0xdust do not.
+    assert inv_markets == 1 < markets
+    assert inv_best == pytest.approx(bot_supply_apy(0.5, RAT_65PCT), rel=1e-12)
