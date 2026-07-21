@@ -10,9 +10,13 @@ should read it plus each repo's CLAUDE.md and not re-litigate decisions.
   per-market drill-down, not its own tab). HEGEMON benchmark and bot tick
   archive are explicitly deferred.
 - **Data path**: static JSON snapshots. New MNEMON `export` job writes JSON
-  files; the VPS's existing Caddy serves them under
-  `logs.myrmidons-strategies.com/mnemon/*`; the FE proxies through a Next.js
-  API route with caching. No new runtime process anywhere.
+  files; the VPS's existing Caddy serves them on a dedicated subdomain
+  `data.myrmidons-strategies.com`; the FE proxies through a Next.js API route
+  with caching. No new runtime process anywhere.
+- **DNS**: `data.myrmidons-strategies.com` is a new A record → `51.210.107.138`,
+  added in the Vercel DNS panel (Vercel hosts this domain's DNS). NOTE: without
+  an explicit record, `data.*` resolves to Vercel's catch-all IPs — the A
+  record must be added to override it (this is exactly how `logs.*` works).
 - **UI**: one new tool in the tools pane registry
   (`components/tools/fileGroups.ts`), id `mnemon`, title `MNEMON`. The pane
   shows a compact summary + link; the real UI is a dedicated route
@@ -123,29 +127,38 @@ shaping helpers (row → dict) go in the job module and get direct unit tests.
 1. Push to main, `git pull` in `~/mnemon` (+ `uv sync` if deps changed).
    Scheduler picks the job up next tick. Force-run once:
    `uv run python -m mnemon run --only export`.
-2. Edit `/etc/caddy/Caddyfile` — add inside the existing
-   `logs.myrmidons-strategies.com` block (order it with the other handles):
+2. **DNS first** (Vercel panel): add A record `data` → `51.210.107.138`.
+   Confirm `dig +short data.myrmidons-strategies.com` returns ONLY the VPS IP
+   before touching Caddy — Caddy's Let's Encrypt HTTP-01 challenge (port 80,
+   already open) only succeeds once DNS points at the box. Reloading before
+   DNS resolves = failed cert issuance (retries, but noisy in journal).
+3. Edit `/etc/caddy/Caddyfile` — add a NEW top-level vhost block (sibling of
+   the `logs.*` block, not nested). Whole subdomain = the export dir, so no
+   `handle_path` and no fighting the logs vhost's global `no-cache` header:
 
    ```caddy
-   handle_path /mnemon/* {
+   data.myrmidons-strategies.com {
+     encode gzip
+     header {
+       Cache-Control "public, max-age=60"
+       Access-Control-Allow-Origin "*"
+     }
      root * /home/ubuntu/mnemon/data/export
-     header Cache-Control "public, max-age=60"
-     header Access-Control-Allow-Origin "*"
      file_server
    }
    ```
 
-   Then `sudo systemctl reload caddy`.
-3. **Permission check** (likely gotcha): Caddy runs as the `caddy` user;
+   Then `sudo systemctl reload caddy`. Watch the first cert issuance:
+   `journalctl -u caddy -f`.
+4. **Permission check** (likely gotcha): Caddy runs as the `caddy` user;
    `/home/ubuntu` may be `750`. Verify with
    `sudo -u caddy cat /home/ubuntu/mnemon/data/export/market_health.json`.
    If denied: `chmod o+x /home/ubuntu /home/ubuntu/mnemon
    /home/ubuntu/mnemon/data` and `o+rx` on `export/` (or point `export_dir`
    at `/srv/mnemon-export` owned by ubuntu, `o+rx`).
-4. Verify from outside:
-   `curl -s https://logs.myrmidons-strategies.com/mnemon/market_health.json | head`.
-   Note the global vhost header sets `Cache-Control no-cache` — the
-   per-handle header above must win; confirm with `curl -sI`.
+5. Verify from outside:
+   `curl -sI https://data.myrmidons-strategies.com/market_health.json`
+   → `200`, `Cache-Control: public, max-age=60`, gzip.
 
 ---
 
@@ -160,7 +173,7 @@ Whitelist `snapshot ∈ {market-health, util-spells}` → fetch
 `${MNEMON_DATA_URL}/<market_health|util_spells>.json` with
 `next: { revalidate: 120 }`; 404 on anything else, pass through
 `generated_at`. Env `MNEMON_DATA_URL`, default
-`https://logs.myrmidons-strategies.com/mnemon`. No token needed (data is
+`https://data.myrmidons-strategies.com`. No token needed (data is
 public). Add Zod schemas in `lib/mnemon/schemas.ts` + TanStack hooks in
 `lib/mnemon/queries.ts` (mirror the `lib/morpho/*` layering).
 
@@ -211,7 +224,7 @@ No new env required (default URL baked in); optionally set `MNEMON_DATA_URL`.
 
 ## Verification checklist (end-to-end)
 
-1. VPS: `curl -sI https://logs.myrmidons-strategies.com/mnemon/market_health.json`
+1. VPS: `curl -sI https://data.myrmidons-strategies.com/market_health.json`
    → 200, `Cache-Control: public, max-age=60`, gzip.
 2. `generated_at` advances across two 15-min ticks.
 3. FE dev: `/api/mnemon/market-health` returns the JSON; `/tools/mnemon`
