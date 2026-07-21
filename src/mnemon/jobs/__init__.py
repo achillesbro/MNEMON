@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from mnemon.jobs.context import Context
 from mnemon.jobs.bot_events import job_bot_events
+from mnemon.jobs.export import job_export
 from mnemon.jobs.heal import job_heal
 from mnemon.jobs.market_state import job_market_state
 from mnemon.jobs.markets_dim import job_markets_dim
@@ -27,7 +28,8 @@ log = logging.getLogger(__name__)
 
 # Order matters: markets_dim runs before dependents so a brand-new market has
 # its dimension row (decimals, symbols) before state rows reference it.
-# heal runs last: it patches whatever the live jobs (or past outages) missed.
+# heal runs before export so gaps are patched first; export runs LAST — it only
+# reads the views over what every other job has already written this tick.
 JOBS: dict[str, Callable[[Context], str]] = {
     "markets": job_markets_dim,
     "market_state": job_market_state,
@@ -39,6 +41,7 @@ JOBS: dict[str, Callable[[Context], str]] = {
     "vault_v2_state": job_vault_v2_state,
     "vault_v2_flows": job_vault_v2_flows,
     "heal": job_heal,
+    "export": job_export,
 }
 
 

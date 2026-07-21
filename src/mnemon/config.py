@@ -47,6 +47,7 @@ class Cadences(BaseModel):
     bot_events: int = 900
     vault_v2_state: int = 3600
     vault_v2_flows: int = 3600
+    export: int = 900
 
 
 class Config(BaseModel):
@@ -58,6 +59,9 @@ class Config(BaseModel):
     # Directory of HEGEMON V2 bot JSONL event files (events-YYYY-MM-DD.jsonl),
     # the bind-mounted sink on the shared host. None disables the bot_events job.
     hegemon_event_dir: Path | None = None
+    # Directory the `export` job writes FE-facing JSON snapshots to. Relative
+    # paths resolve against the config file; None defaults to <data_dir>/export.
+    export_dir: Path | None = None
     extra_markets: list[ExtraMarket] = Field(default_factory=list)
     cadences: Cadences = Field(default_factory=Cadences)
     http: HttpConfig = Field(default_factory=HttpConfig)
@@ -93,4 +97,9 @@ def load_config(path: Path | str = "config.yaml") -> Config:
     # Resolve data_dir relative to the config file so cron's cwd doesn't matter.
     if not cfg.data_dir.is_absolute():
         cfg.data_dir = (path.parent / cfg.data_dir).resolve()
+    # export_dir: default under data_dir; resolve a relative override vs config.
+    if cfg.export_dir is None:
+        cfg.export_dir = cfg.data_dir / "export"
+    elif not cfg.export_dir.is_absolute():
+        cfg.export_dir = (path.parent / cfg.export_dir).resolve()
     return cfg

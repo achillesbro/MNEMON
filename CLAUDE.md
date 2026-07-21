@@ -106,6 +106,21 @@ they diverge, yield exists only at un-deployable size. Live calibration
 universe gap 3482 bps collapsed to 1 bp deployable — HEGEMON's set was
 near-optimal.
 
+### FE export job (added 2026-07-21)
+
+`export` job (15 min, runs LAST after `heal`) writes static JSON snapshots to
+`cfg.export_dir` (default `<data_dir>/export`, i.e. `~/mnemon/data/export`) for
+the website's tools section. Read side only: opens `MnemonReader` (in-memory
+DuckDB over the Parquet globs, never the persisted db); atomic tmp+rename
+writes; row shaping is pure (`build_market_health`/`build_util_spells`, unit-
+tested); skips a file when its source views aren't present rather than failing.
+Files: `market_health.json` (latest row per market from `v_market_health` +
+`v_market_apy` + `markets`, only markets fresh within 48h, each with a 7d
+hourly APY/util sparkline) and `util_spells.json` (`v_util_spells`, trailing
+30d, `open` flag). Each has `schema_version`/`generated_at`/`chain_id`. Served
+by Caddy at `data.myrmidons-strategies.com` (see plan in
+`docs/FE_SURFACING_PLAN.md`); the FE consumes it, not the raw views.
+
 ## API gotchas (see docs/SCHEMA_NOTES.md for the full list)
 
 - `vaultV2transactions`: `orderBy` enum is `Time` (not `Timestamp`);

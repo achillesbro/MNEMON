@@ -42,6 +42,11 @@ v2_vaults:
 # Absent/missing dir => bot_events job no-ops (fine for local dev).
 hegemon_event_dir: /home/ubuntu/HEGEMON_V2/data/events
 
+# Where the `export` job writes FE-facing JSON snapshots. Defaults to
+# <data_dir>/export (i.e. ~/mnemon/data/export on the VPS), which Caddy serves
+# at data.myrmidons-strategies.com. Uncomment to override.
+# export_dir: data/export
+
 # Job cadences in seconds. `python -m mnemon run` (cron every 15 min) runs
 # whichever jobs are due according to the last-success time in the state file.
 # NOTE: nothing can run more often than the scheduler fires — the systemd
@@ -62,6 +67,10 @@ cadences:
   # Daily gap-repair: re-pulls recent hourly history and inserts only missing
   # buckets, so upstream API outages don't leave permanent holes.
   heal: 86400
+  # FE JSON snapshots (market_health.json, util_spells.json) for the website's
+  # tools section. Written to export_dir (default <data_dir>/export), served
+  # statically by Caddy at data.myrmidons-strategies.com.
+  export: 900
 
 # Lookback window (hours) for the heal job. Must exceed the longest outage
 # you want auto-recovered; `python -m mnemon heal --hours N` overrides it.
