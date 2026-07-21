@@ -75,9 +75,36 @@ sink history before 2026-07-20 ~10:52 UTC). Contract: bot repo's
   `utilizationToRate`, steepness 4, target 0.9, 3-term Taylor compounding;
   **fee assumed 0** because `market_state` has no fee column — documented in
   `docs/SCHEMA_NOTES.md`, verified 0.00 bps vs `bot_scores.apy` live),
-  `v_apy_spread`, `v_util_spells` (gaps-and-islands at u ≥ 0.92/0.95, 2h hole
-  tolerance), `v_hegemon_benchmark` (equal-weight + best-market passive
-  counterfactuals).
+  `v_market_health`, `v_apy_spread` (baseline = best NON-broken market,
+  `is_broken` flagged), `v_util_spells` (gaps-and-islands at u ≥ 0.92/0.95,
+  2h hole tolerance), `v_hegemon_benchmark` (three tiers, see below).
+
+### Broken-market classifier + three-tier benchmark (added 2026-07-21)
+
+`v_market_health` (market × ts: `is_broken`, `broken_reason`, `supply_usd`,
+`available_usd` via ASOF join to `prices`) — fixed-rule hysteresis, operator-
+tuned thresholds (change them in `views.py`, history reclassifies on refresh):
+- **rate_ratchet**: `apy_at_target > 50%` enters broken, `< 25%` exits — the
+  AdaptiveCurveIRM ratchets ~2×/5 days pinned at u=1 and decays symmetrically,
+  so the IRM itself is the time integrator (don't use instantaneous supply
+  APY: it spikes legitimately).
+- **pinned_util**: u ≥ 0.999 across the whole trailing 24h enters; exits after
+  48h entirely below 0.95 (span guards vs data holes).
+- **dust**: supply < $1k USD, unconditional.
+- **Thin exemption**: ratchet/pinned only apply while supply < $25k — a deep
+  hot market is an opportunity, not a defect. Unpriced ⇒ thin but never dust.
+- State machines = enter/exit events + `LAST_VALUE(... IGNORE NULLS)`;
+  durations = trailing `RANGE` windows over event time.
+
+`v_hegemon_benchmark` per ts, three tiers: **eligible** (non-broken universe,
+echo-chamber antidote), **investable** (eligible + `available_usd ≥ $10k` —
+the deployable truth; **$10k mirrors the bot's `minAvailableLiquidity`, keep
+them in sync when the bot config changes**), and the **bot's scored set**.
+`opportunity_gap_apy` (universe) vs `deployable_gap_apy` (investable) — when
+they diverge, yield exists only at un-deployable size. Live calibration
+2026-07-21: 6 broken markets (639%-ratchet dust, 84%-pinned zombie, etc.);
+universe gap 3482 bps collapsed to 1 bp deployable — HEGEMON's set was
+near-optimal.
 
 ## API gotchas (see docs/SCHEMA_NOTES.md for the full list)
 
