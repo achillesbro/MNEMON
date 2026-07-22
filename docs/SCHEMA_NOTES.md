@@ -155,6 +155,14 @@ everything, so don't copy shapes from the old entity:
   `market_flows` job's first run backfills only `market_flows_backfill_hours`
   (default 7d ≈ 250 pages) instead of t=0 (~16k pages ≈ 1.4h at the 300ms
   throttle). Widen the config before the first run if more history is wanted.
+- **`skip` is capped at 10,000** (BAD_USER_INPUT above it — discovered live
+  2026-07-22 when the backfill stalled). Deep history therefore CANNOT be
+  paged with skip alone: walk it in timestamp windows — fetch ≤100 pages,
+  advance `timestamp_gte` to the last event seen (skip resets to 0), repeat.
+  The `market_flows` job commits each window (upsert + cursor + state save)
+  so an error mid-walk never loses fetched data. Assume the same cap on every
+  paginated entity (`marketPositions`, `vaultV2transactions`) — they just
+  haven't hit it yet at current data sizes.
 
 Supplier positions: the same `marketPositions` entity that serves the borrower
 book also serves lenders — filter `supplyShares_gte: "1"`, order by

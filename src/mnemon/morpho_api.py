@@ -364,10 +364,15 @@ class MorphoClient:
         log.warning("supplier_positions truncated at %d pages (%d rows)", max_pages, len(items))
         return items
 
-    def market_transactions(self, chain_id: int, since_ts: int, max_pages: int = 400) -> list[dict]:
+    def market_transactions(
+        self, chain_id: int, since_ts: int, max_pages: int = 100
+    ) -> tuple[list[dict], bool]:
         """Whole-chain Morpho Blue market events since `since_ts` (inclusive),
-        oldest first. Truncation at max_pages is safe: the caller's cursor
-        advances to the last item seen, so the next run resumes from there."""
+        oldest first. Returns (items, truncated). NB: the API rejects
+        skip > 10,000 (discovered live 2026-07-22), so one call can never page
+        past max_pages=100 — deep history is walked by re-querying with
+        since_ts advanced to the last timestamp seen (skip resets to 0), which
+        is what truncated=True tells the caller to do."""
         items: list[dict] = []
         for page in range(max_pages):
             data = self.query(
@@ -376,9 +381,8 @@ class MorphoClient:
             )["marketTransactions"]
             items.extend(data["items"])
             if data["pageInfo"]["count"] < 100:
-                return items
-        log.warning("market_transactions truncated at %d pages (%d rows)", max_pages, len(items))
-        return items
+                return items, False
+        return items, True
 
     def vault_v2_state(self, address: str, chain_id: int) -> dict | None:
         return self.query(Q_VAULT_V2_STATE, {"address": address, "chainId": chain_id})["vaultV2ByAddress"]

@@ -121,8 +121,10 @@ near-optimal.
   SupplyCollateral/WithdrawCollateral/Liquidation), event-keyed on
   `(tx_hash, log_index)`, per-chain ts cursor (`market_flows:<chain>`) with 1h
   overlap. **First run backfills only `market_flows_backfill_hours` (7d), not
-  t=0** — the chain has ~1.6M historical events. Truncated fetches self-heal:
-  the cursor advances only to the last event received.
+  t=0** — the chain has ~1.6M historical events. The API caps `skip` at
+  10,000, so deep history is walked in timestamp-windowed batches (≤100 pages
+  each, ≤4 batches/run, each committed with its cursor before the next) —
+  truncation and outages self-heal from the saved cursor.
 - `supplier_positions` job (hourly): lender book per tracked market
   (`marketPositions` with `supplyShares_gte`), no supply floor — ~900 rows
   chain-wide. Answers "who can unilaterally move a market's yield".
