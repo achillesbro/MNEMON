@@ -49,6 +49,9 @@ v2_vaults:
   - address: "0xB851D568d123077E787860a34da286255249d983"
     chain_id: 999
     label: myrmidons-usdt0-v2
+  - address: "0x7EE335d7Bd6355C5fa651776B0EBdB726f929766"
+    chain_id: 999
+    label: myrmidons-usdc-v2
 
 # HEGEMON V2 bot JSONL event sink (bind mount on the shared VPS host).
 # Absent/missing dir => bot_events job no-ops (fine for local dev).
