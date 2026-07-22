@@ -537,6 +537,260 @@ DERIVED_VIEWS: list[DerivedView] = [
         GROUP BY ts, chain_id
         """,
     ),
+    DerivedView(
+        "v_market_flows",
+        frozenset({"market_flows", "markets"}),
+        # Every market event in human units. Raw `assets` means loan units for
+        # transfer types and collateral units for collateral transfers, so it
+        # is split into two explicitly-scaled columns. supply_flow/borrow_flow
+        # are SIGNED loan-unit deltas (deposits/borrows positive): a
+        # Liquidation reduces borrow by repaid_assets and — when bad debt is
+        # realized — reduces supply by bad_debt_assets (Morpho socializes it).
+        """
+        SELECT
+            f.ts,
+            f.chain_id,
+            f.market_id,
+            m.loan_symbol,
+            COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+            f.block_number,
+            f.tx_hash,
+            f.log_index,
+            f.type,
+            f.account,
+            CASE WHEN f.type IN ('Supply', 'Withdraw', 'Borrow', 'Repay')
+                 THEN f.assets::DOUBLE / POW(10, m.loan_decimals) END        AS loan_assets,
+            CASE WHEN f.type IN ('SupplyCollateral', 'WithdrawCollateral')
+                 THEN f.assets::DOUBLE / POW(10, m.collateral_decimals) END  AS collateral_assets,
+            f.liquidator,
+            f.repaid_assets::DOUBLE   / POW(10, m.loan_decimals)             AS repaid_assets,
+            f.seized_assets::DOUBLE   / POW(10, m.collateral_decimals)       AS seized_assets,
+            f.bad_debt_assets::DOUBLE / POW(10, m.loan_decimals)             AS bad_debt_assets,
+            CASE f.type
+                WHEN 'Supply'      THEN  f.assets::DOUBLE / POW(10, m.loan_decimals)
+                WHEN 'Withdraw'    THEN -f.assets::DOUBLE / POW(10, m.loan_decimals)
+                WHEN 'Liquidation' THEN -f.bad_debt_assets::DOUBLE / POW(10, m.loan_decimals)
+            END AS supply_flow,
+            CASE f.type
+                WHEN 'Borrow'      THEN  f.assets::DOUBLE / POW(10, m.loan_decimals)
+                WHEN 'Repay'       THEN -f.assets::DOUBLE / POW(10, m.loan_decimals)
+                WHEN 'Liquidation' THEN -f.repaid_assets::DOUBLE / POW(10, m.loan_decimals)
+            END AS borrow_flow
+        FROM market_flows f
+        LEFT JOIN markets m USING (chain_id, market_id)
+        """,
+    ),
+    DerivedView(
+        "v_market_netflow",
+        frozenset({"market_flows", "markets"}),
+        # Hourly gross/net loan-side flows per market: the "what moved" series
+        # behind utilization changes. Sums are in loan-token units; join
+        # v_prices for USD at query time if needed.
+        """
+        SELECT
+            TIME_BUCKET(INTERVAL 1 HOUR, ts) AS ts,
+            chain_id,
+            market_id,
+            loan_symbol,
+            collateral_symbol,
+            COALESCE(SUM(supply_flow) FILTER (supply_flow > 0), 0)  AS supply_in,
+            COALESCE(SUM(-supply_flow) FILTER (supply_flow < 0), 0) AS supply_out,
+            COALESCE(SUM(supply_flow), 0)                           AS net_supply_flow,
+            COALESCE(SUM(borrow_flow) FILTER (borrow_flow > 0), 0)  AS borrow_in,
+            COALESCE(SUM(-borrow_flow) FILTER (borrow_flow < 0), 0) AS borrow_out,
+            COALESCE(SUM(borrow_flow), 0)                           AS net_borrow_flow,
+            COUNT(*)                                                AS n_events,
+            COUNT(*) FILTER (type = 'Liquidation')                  AS n_liquidations
+        FROM v_market_flows
+        GROUP BY 1, 2, 3, 4, 5
+        """,
+    ),
+    DerivedView(
+        "v_liquidations",
+        frozenset({"market_flows", "markets", "prices"}),
+        # Liquidation feed with USD sizing (ASOF join to the nearest prior
+        # price, same pattern as v_market_health). account = the liquidatee.
+        """
+        SELECT
+            f.ts,
+            f.chain_id,
+            f.market_id,
+            m.loan_symbol,
+            m.collateral_symbol,
+            f.tx_hash,
+            f.account AS borrower,
+            f.liquidator,
+            f.repaid_assets::DOUBLE   / POW(10, m.loan_decimals)       AS repaid_assets,
+            f.seized_assets::DOUBLE   / POW(10, m.collateral_decimals) AS seized_assets,
+            f.bad_debt_assets::DOUBLE / POW(10, m.loan_decimals)       AS bad_debt_assets,
+            f.repaid_assets::DOUBLE / POW(10, m.loan_decimals)
+                * pl.price_usd                                         AS repaid_usd,
+            f.seized_assets::DOUBLE / POW(10, m.collateral_decimals)
+                * pc.price_usd                                         AS seized_usd
+        FROM market_flows f
+        LEFT JOIN markets m USING (chain_id, market_id)
+        ASOF LEFT JOIN prices pl
+            ON pl.chain_id = f.chain_id
+           AND pl.token_address = LOWER(m.loan_token)
+           AND pl.ts <= f.ts
+        ASOF LEFT JOIN prices pc
+            ON pc.chain_id = f.chain_id
+           AND pc.token_address = LOWER(m.collateral_token)
+           AND pc.ts <= f.ts
+        WHERE f.type = 'Liquidation'
+        """,
+    ),
+    DerivedView(
+        "v_whale_flows",
+        frozenset({"market_flows", "markets", "market_state"}),
+        # Single events large enough to move a market: loan-side flows sized
+        # against the market's supply at the nearest prior state sample.
+        # 5% of supply is an operator-tuned floor (like v_vault_drift's 0.5pp)
+        # — consumers can filter harder on pct_of_supply.
+        """
+        WITH sized AS (
+            -- borrow_flow first: a Liquidation's supply_flow is -bad_debt
+            -- (usually 0) and would mask the repaid size.
+            SELECT
+                f.*,
+                COALESCE(f.borrow_flow, f.supply_flow) AS flow,
+                ms.total_supply_assets::DOUBLE / POW(10, m.loan_decimals) AS market_supply
+            FROM v_market_flows f
+            LEFT JOIN markets m USING (chain_id, market_id)
+            ASOF LEFT JOIN market_state ms
+                ON ms.chain_id = f.chain_id
+               AND ms.market_id = f.market_id
+               AND ms.ts <= f.ts
+            WHERE COALESCE(f.borrow_flow, f.supply_flow) IS NOT NULL
+        )
+        SELECT
+            ts, chain_id, market_id, loan_symbol, collateral_symbol,
+            tx_hash, type, account, flow, market_supply,
+            100.0 * ABS(flow) / market_supply AS pct_of_supply
+        FROM sized
+        WHERE market_supply > 0
+          AND ABS(flow) >= 0.05 * market_supply
+        ORDER BY ts DESC
+        """,
+    ),
+    DerivedView(
+        "v_supplier_concentration",
+        frozenset({"supplier_positions", "markets"}),
+        # Lender-book concentration from the latest supplier snapshot: who can
+        # unilaterally move a market's utilization (and thus yield) by
+        # withdrawing. Mirrors v_position_risk's shape; top suppliers are
+        # often V1 vault addresses — that's the answer, not an artifact.
+        """
+        WITH latest AS (
+            SELECT chain_id, market_id, MAX(ts) AS mx FROM supplier_positions GROUP BY 1, 2
+        ),
+        p AS (
+            SELECT sp.* FROM supplier_positions sp
+            JOIN latest l ON sp.chain_id = l.chain_id AND sp.market_id = l.market_id AND sp.ts = l.mx
+        )
+        SELECT
+            p.chain_id,
+            p.market_id,
+            m.loan_symbol,
+            COALESCE(m.collateral_symbol, 'IDLE') AS collateral_symbol,
+            MAX(p.ts) AS ts,
+            COUNT(*) AS suppliers,
+            SUM(p.supply_assets)::DOUBLE / POW(10, m.loan_decimals) AS total_supply,
+            arg_max(p.supplier, p.supply_assets::DOUBLE) AS top1_supplier,
+            100.0 * MAX(p.supply_assets::DOUBLE)
+                / NULLIF(SUM(p.supply_assets)::DOUBLE, 0) AS top1_supply_pct,
+            100.0 * list_sum(list_slice(list_sort(list(p.supply_assets::DOUBLE), 'DESC'), 1, 3))
+                / NULLIF(SUM(p.supply_assets)::DOUBLE, 0) AS top3_supply_pct
+        FROM p
+        LEFT JOIN markets m USING (chain_id, market_id)
+        GROUP BY p.chain_id, p.market_id, m.loan_symbol, m.collateral_symbol, m.loan_decimals
+        """,
+    ),
+    DerivedView(
+        "v_oracle_price_check",
+        frozenset({"market_state", "markets", "prices"}),
+        # Morpho oracle vs DefiLlama cross-check per state sample. Both sides
+        # priced as "1 collateral token in loan tokens": the oracle directly
+        # (descaled raw price), the reference as collateral_usd / loan_usd via
+        # ASOF joins. deviation > 0 = oracle richer than DefiLlama. NB: only
+        # live-sampled rows carry oracle_price_raw (the API has no oracle
+        # history series), so coverage starts when live tracking of the market
+        # began. Markets with exchange-rate oracles (LSTs, RWAs) show a
+        # persistent structural deviation — interpret, don't alert blindly.
+        """
+        WITH both_prices AS (
+            SELECT
+                ms.ts,
+                ms.chain_id,
+                ms.market_id,
+                m.loan_symbol,
+                m.collateral_symbol,
+                TRY_CAST(ms.oracle_price_raw AS DOUBLE)
+                    / POW(10, 36 + m.loan_decimals - m.collateral_decimals) AS oracle_price,
+                pc.price_usd / NULLIF(pl.price_usd, 0)                      AS ref_price,
+                pl.price_usd                                                AS loan_price_usd,
+                pc.price_usd                                                AS collateral_price_usd
+            FROM market_state ms
+            JOIN markets m USING (chain_id, market_id)
+            ASOF LEFT JOIN prices pl
+                ON pl.chain_id = ms.chain_id
+               AND pl.token_address = LOWER(m.loan_token)
+               AND pl.ts <= ms.ts
+            ASOF LEFT JOIN prices pc
+                ON pc.chain_id = ms.chain_id
+               AND pc.token_address = LOWER(m.collateral_token)
+               AND pc.ts <= ms.ts
+            WHERE ms.oracle_price_raw IS NOT NULL
+              AND m.collateral_token IS NOT NULL
+        )
+        SELECT *,
+               oracle_price / NULLIF(ref_price, 0) - 1 AS deviation
+        FROM both_prices
+        """,
+    ),
+    DerivedView(
+        "v_depeg_spells",
+        frozenset({"market_state", "markets", "prices"}),  # via v_oracle_price_check
+        # Gaps-and-islands over |oracle vs DefiLlama deviation| >= threshold —
+        # how often a market's oracle decouples and for how long. Same episode
+        # machinery as v_util_spells (2h hole tolerance; oracle price exists
+        # only in live 5-min samples). Thresholds are operator-tuned: 2% flags
+        # meaningful drift, 5% a hard depeg. Episode identification only —
+        # frequency/severity statistics belong to the myrmidons library.
+        """
+        WITH thresholds(threshold) AS (VALUES (0.02), (0.05)),
+        flagged AS (
+            SELECT t.threshold, c.chain_id, c.market_id, c.ts, c.deviation,
+                   CASE WHEN ABS(c.deviation) >= t.threshold THEN 1 ELSE 0 END AS above
+            FROM v_oracle_price_check c
+            CROSS JOIN thresholds t
+            WHERE c.deviation IS NOT NULL
+        ), runs AS (
+            SELECT *,
+                CASE WHEN above = 1
+                      AND (LAG(above) OVER w = 1)
+                      AND ts - LAG(ts) OVER w <= INTERVAL 2 HOUR
+                     THEN 0 ELSE 1 END AS is_start
+            FROM flagged
+            WINDOW w AS (PARTITION BY threshold, chain_id, market_id ORDER BY ts)
+        ), islands AS (
+            SELECT *,
+                SUM(is_start) OVER (
+                    PARTITION BY threshold, chain_id, market_id ORDER BY ts
+                ) AS spell_id
+            FROM runs
+            WHERE above = 1
+        )
+        SELECT chain_id, market_id, threshold,
+               MIN(ts)                               AS start_ts,
+               MAX(ts)                               AS end_ts,
+               DATE_DIFF('minute', MIN(ts), MAX(ts)) AS duration_min,
+               MAX(ABS(deviation))                   AS peak_abs_deviation,
+               arg_max(deviation, ABS(deviation))    AS peak_deviation
+        FROM islands
+        GROUP BY chain_id, market_id, threshold, spell_id
+        """,
+    ),
 ]
 
 

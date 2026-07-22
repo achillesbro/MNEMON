@@ -34,5 +34,8 @@ def test_load_repo_config():
     assert cfg.chain(999).llama_slug == "hyperliquid"
     assert len(cfg.vaults) == 2
     assert cfg.cadences.market_state == 300
-    assert cfg.cadences.positions == 3600
+    assert cfg.cadences.positions == 300  # bumped to the scheduler-tick floor 2026-07-22
+    assert cfg.cadences.supplier_positions == 3600
+    assert cfg.cadences.market_flows == 900
+    assert cfg.market_flows_backfill_hours == 168
     assert cfg.data_dir.is_absolute()

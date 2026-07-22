@@ -40,7 +40,9 @@ class Cadences(BaseModel):
     market_state: int = 300
     prices: int = 900
     vault_allocations: int = 900
-    positions: int = 3600
+    positions: int = 300
+    supplier_positions: int = 3600
+    market_flows: int = 900
     markets: int = 86400
     yield_pools: int = 21600
     heal: int = 86400
@@ -78,6 +80,11 @@ class Config(BaseModel):
     cadences: Cadences = Field(default_factory=Cadences)
     http: HttpConfig = Field(default_factory=HttpConfig)
     positions_max_pages: int = 50
+    # How far back the market_flows job reaches on its FIRST run (no cursor).
+    # Deliberately bounded: the chain has millions of historical market events
+    # and a t=0 backfill would take hours of paging. Widen before first run if
+    # more history is wanted; once the cursor exists this is never read again.
+    market_flows_backfill_hours: int = 168
     # How far back the daily heal job re-pulls hourly history to fill gaps
     # left by upstream outages. Must exceed the longest outage you want to
     # recover from automatically; wider windows are idempotent but cost calls.

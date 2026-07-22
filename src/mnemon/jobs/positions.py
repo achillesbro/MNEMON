@@ -1,4 +1,4 @@
-"""positions job (daily): snapshot of current borrower positions per tracked
+"""positions job (5 min): snapshot of current borrower positions per tracked
 market. The Morpho API only serves *current* positions, so history accumulates
 forward from the day tracking starts — that's a known limitation, documented
 in SCHEMA_NOTES."""

@@ -160,6 +160,63 @@ query PositionsPage($ids: [String!], $chainIds: [Int!], $first: Int!, $skip: Int
 }
 """
 
+# Suppliers-only mirror of Q_POSITIONS_PAGE. NB: the two filters cannot be
+# combined in one query — where-clauses AND together, so borrowShares_gte +
+# supplyShares_gte would return only positions that are both.
+Q_SUPPLIERS_PAGE = """
+query SuppliersPage($ids: [String!], $chainIds: [Int!], $first: Int!, $skip: Int!) {
+  marketPositions(
+    first: $first
+    skip: $skip
+    orderBy: SupplyShares
+    orderDirection: Desc
+    where: { marketUniqueKey_in: $ids, chainId_in: $chainIds, supplyShares_gte: "1" }
+  ) {
+    items {
+      user { address }
+      market { marketId chain { id } }
+      state { supplyShares supplyAssets }
+    }
+    pageInfo { countTotal count }
+  }
+}
+"""
+
+# Per-market Morpho Blue events. NB: the old `transactions` entity is
+# deprecated (2026-04-23) in favor of `marketTransactions`, whose enum drops
+# the Market prefix (Supply, Withdraw, ...) and whose data union types are
+# MarketTransaction*Data (not MarketTransferTransactionData like the old one).
+Q_MARKET_TRANSACTIONS = """
+query MarketTransactions($chainIds: [Int!], $sinceTs: Int, $first: Int!, $skip: Int!) {
+  marketTransactions(
+    first: $first
+    skip: $skip
+    orderBy: Timestamp
+    orderDirection: Asc
+    where: { chainId_in: $chainIds, timestamp_gte: $sinceTs }
+  ) {
+    items {
+      txHash
+      logIndex
+      blockNumber
+      timestamp
+      type
+      user { address }
+      market { marketId chain { id } }
+      data {
+        __typename
+        ... on MarketTransactionTransferData { assets shares }
+        ... on MarketTransactionCollateralTransferData { assets }
+        ... on MarketTransactionLiquidationData {
+          liquidator repaidAssets seizedAssets badDebtAssets
+        }
+      }
+    }
+    pageInfo { count countTotal }
+  }
+}
+"""
+
 Q_ASSET_PRICES = """
 query AssetPrices($addresses: [String!], $chainIds: [Int!]) {
   assets(where: { address_in: $addresses, chainId_in: $chainIds }) {
@@ -290,6 +347,37 @@ class MorphoClient:
             if data["pageInfo"]["count"] < 100:
                 return items
         log.warning("positions truncated at %d pages (%d rows)", max_pages, len(items))
+        return items
+
+    def supplier_positions(self, market_ids: list[str], chain_ids: list[int], max_pages: int) -> list[dict]:
+        """Current positions with supply shares (the lender book). Like
+        positions(), the API only serves current state."""
+        items: list[dict] = []
+        for page in range(max_pages):
+            data = self.query(
+                Q_SUPPLIERS_PAGE,
+                {"ids": market_ids, "chainIds": chain_ids, "first": 100, "skip": page * 100},
+            )["marketPositions"]
+            items.extend(data["items"])
+            if data["pageInfo"]["count"] < 100:
+                return items
+        log.warning("supplier_positions truncated at %d pages (%d rows)", max_pages, len(items))
+        return items
+
+    def market_transactions(self, chain_id: int, since_ts: int, max_pages: int = 400) -> list[dict]:
+        """Whole-chain Morpho Blue market events since `since_ts` (inclusive),
+        oldest first. Truncation at max_pages is safe: the caller's cursor
+        advances to the last item seen, so the next run resumes from there."""
+        items: list[dict] = []
+        for page in range(max_pages):
+            data = self.query(
+                Q_MARKET_TRANSACTIONS,
+                {"chainIds": [chain_id], "sinceTs": since_ts, "first": 100, "skip": page * 100},
+            )["marketTransactions"]
+            items.extend(data["items"])
+            if data["pageInfo"]["count"] < 100:
+                return items
+        log.warning("market_transactions truncated at %d pages (%d rows)", max_pages, len(items))
         return items
 
     def vault_v2_state(self, address: str, chain_id: int) -> dict | None:

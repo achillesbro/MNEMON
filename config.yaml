@@ -39,7 +39,7 @@ full_scan_chains: [999]
 # A full-scan market must have >= this much USD supply to be tracked (keeps
 # empty/dust markets out). Vault allocations + extra_markets ignore this floor.
 min_market_supply_usd: 1000
-# The hourly positions (borrower-book) job skips markets below this USD supply —
+# The positions (borrower-book) job skips markets below this USD supply —
 # borrower risk is only worth pulling for markets of meaningful size. Markets
 # with unknown supply (vault/extra markets outside the scan) are always pulled.
 positions_min_supply_usd: 50000
@@ -73,9 +73,13 @@ cadences:
   bot_events: 900
   vault_v2_state: 3600
   vault_v2_flows: 3600
-  # Full borrower book, hourly. Finer position tracking for near-liquidation
-  # monitoring belongs in the consumer's own live loop, not the archive.
-  positions: 3600
+  # Full borrower book, every 5 min (the scheduler-tick floor). Anything finer
+  # for near-liquidation monitoring belongs in the consumer's own live loop.
+  positions: 300
+  # Lender book, hourly — supply concentration moves slowly.
+  supplier_positions: 3600
+  # Whole-chain market events (supply/withdraw/borrow/repay/liquidations).
+  market_flows: 900
   markets: 86400
   # yields.llama.fi/pools is one multi-MB dump — 4x/day is polite.
   yield_pools: 21600
@@ -99,3 +103,8 @@ http:
 
 # Safety cap on position pagination (100 positions per page, per market).
 positions_max_pages: 50
+
+# First-run lookback for market_flows (hours). Bounded on purpose — the chain
+# has millions of historical events; a t=0 backfill would page for hours.
+# Ignored once the per-chain cursor exists.
+market_flows_backfill_hours: 168

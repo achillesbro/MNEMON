@@ -15,10 +15,12 @@ from mnemon.jobs.context import Context
 from mnemon.jobs.bot_events import job_bot_events
 from mnemon.jobs.export import job_export
 from mnemon.jobs.heal import job_heal
+from mnemon.jobs.market_flows import job_market_flows
 from mnemon.jobs.market_state import job_market_state
 from mnemon.jobs.markets_dim import job_markets_dim
 from mnemon.jobs.positions import job_positions
 from mnemon.jobs.prices import job_prices
+from mnemon.jobs.supplier_positions import job_supplier_positions
 from mnemon.jobs.vault_allocations import job_vault_allocations
 from mnemon.jobs.vault_v2_flows import job_vault_v2_flows
 from mnemon.jobs.vault_v2_state import job_vault_v2_state
@@ -36,6 +38,8 @@ JOBS: dict[str, Callable[[Context], str]] = {
     "vault_allocations": job_vault_allocations,
     "prices": job_prices,
     "positions": job_positions,
+    "supplier_positions": job_supplier_positions,
+    "market_flows": job_market_flows,
     "yield_pools": job_yield_pools,
     "bot_events": job_bot_events,
     "vault_v2_state": job_vault_v2_state,

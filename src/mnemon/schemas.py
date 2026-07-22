@@ -97,7 +97,7 @@ POSITIONS = TableSpec(
     name="positions",
     schema=pa.schema(
         [
-            ("ts", TS),  # daily bucket; API serves current positions only
+            ("ts", TS),  # cadence bucket; API serves current positions only
             ("chain_id", pa.int32()),
             ("market_id", pa.string()),
             ("borrower", pa.string()),
@@ -225,6 +225,49 @@ VAULT_V2_STATE = TableSpec(
     keys=["chain_id", "vault", "ts"],
 )
 
+MARKET_FLOWS = TableSpec(
+    name="market_flows",
+    schema=pa.schema(
+        [
+            ("ts", TS),  # block timestamp (event time, not bucketed)
+            ("chain_id", pa.int32()),
+            ("market_id", pa.string()),
+            ("block_number", BIGINT),
+            ("tx_hash", pa.string()),
+            ("log_index", pa.int32()),
+            # Supply | Withdraw | Borrow | Repay | SupplyCollateral |
+            # WithdrawCollateral | Liquidation (MarketTransactionType enum)
+            ("type", pa.string()),
+            ("account", pa.string()),  # the position's user (liquidatee on Liquidation)
+            # loan-token units for Supply/Withdraw/Borrow/Repay,
+            # collateral-token units for SupplyCollateral/WithdrawCollateral,
+            # null on Liquidation (see repaid/seized below)
+            ("assets", BIGINT),
+            ("shares", BIGINT),  # null for collateral transfers and liquidations
+            ("liquidator", pa.string()),  # Liquidation only ------------------
+            ("repaid_assets", BIGINT),  # loan-token units
+            ("seized_assets", BIGINT),  # collateral-token units
+            ("bad_debt_assets", BIGINT),  # loan-token units
+        ]
+    ),
+    keys=["tx_hash", "log_index"],
+)
+
+SUPPLIER_POSITIONS = TableSpec(
+    name="supplier_positions",
+    schema=pa.schema(
+        [
+            ("ts", TS),  # hourly bucket; API serves current positions only
+            ("chain_id", pa.int32()),
+            ("market_id", pa.string()),
+            ("supplier", pa.string()),
+            ("supply_shares", BIGINT),
+            ("supply_assets", BIGINT),
+        ]
+    ),
+    keys=["chain_id", "market_id", "supplier", "ts"],
+)
+
 VAULT_V2_FLOWS = TableSpec(
     name="vault_v2_flows",
     schema=pa.schema(
@@ -261,5 +304,7 @@ ALL_TABLES: dict[str, TableSpec] = {
         BOT_EVENTS,
         VAULT_V2_STATE,
         VAULT_V2_FLOWS,
+        MARKET_FLOWS,
+        SUPPLIER_POSITIONS,
     ]
 }

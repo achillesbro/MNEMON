@@ -16,6 +16,11 @@ Files (each carries schema_version + generated_at + chain_id):
   util_spells.json    v_util_spells for the trailing 30d (both thresholds),
                       `open` flagged when the spell reaches the market's latest
                       sample.
+  market_flows.json   per-market gross/net loan-side flows (24h/7d) + the 14d
+                      whale-flow feed + the 30d liquidation feed, from the
+                      market_flows event table.
+  depeg_spells.json   v_depeg_spells (oracle vs DefiLlama decoupling episodes)
+                      for the trailing 30d, same shape as util_spells.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import pandas as pd
 from mnemon.jobs.context import Context
 from mnemon.reader import MnemonReader
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Latest row per market. Beyond the core health/APY/sizing, this enriches each
 # market with data already computed by other views (all share v_market_health's
@@ -38,6 +43,7 @@ SCHEMA_VERSION = 2
 #   v_market_snapshot   -> oracle_price (1 collateral priced in loan units)
 #   v_price_returns     -> collateral annualized volatility (7d/30d)
 #   v_utilization_regime-> % of time pinned >95%/>99% + avg util (7d/30d)
+#   v_oracle_price_check-> oracle_deviation (oracle vs DefiLlama, at latest ts)
 # Utilization-regime percentages are divided by 100 so every util/ratio field
 # in the export is a fraction — the FE formats them all the same way.
 # The 48h freshness cut is relative to the newest sample in the store (not wall
@@ -78,7 +84,8 @@ SELECT
     ur.pct_time_gt95_7d  / 100 AS pct_time_gt95_7d,
     ur.pct_time_gt95_30d / 100 AS pct_time_gt95_30d,
     ur.pct_time_gt99_7d  / 100 AS pct_time_gt99_7d,
-    ur.pct_time_gt99_30d / 100 AS pct_time_gt99_30d
+    ur.pct_time_gt99_30d / 100 AS pct_time_gt99_30d,
+    oc.deviation AS oracle_deviation
 FROM h
 LEFT JOIN v_market_apy a
        ON a.chain_id = h.chain_id AND a.market_id = h.market_id AND a.ts = h.ts
@@ -92,6 +99,8 @@ LEFT JOIN v_utilization_regime ur
        ON ur.chain_id = h.chain_id AND ur.market_id = h.market_id
 LEFT JOIN vol
        ON vol.chain_id = h.chain_id AND vol.token_address = LOWER(m.collateral_token)
+LEFT JOIN v_oracle_price_check oc
+       ON oc.chain_id = h.chain_id AND oc.market_id = h.market_id AND oc.ts = h.ts
 WHERE h.ts = h.mkt_max_ts
   AND h.mkt_max_ts >= h.global_max_ts - INTERVAL 48 HOUR
 ORDER BY h.is_broken ASC, h.supply_usd DESC NULLS LAST
@@ -109,6 +118,87 @@ SELECT
     pct_debt_hf_lt_105 / 100 AS pct_debt_hf_lt_105,
     top3_debt_pct      / 100 AS top3_debt_pct
 FROM v_position_risk
+"""
+
+# Lender-book concentration (v_supplier_concentration needs the
+# supplier_positions table — merged only when available, like position risk).
+_SUPPLIER_CONC_SQL = """
+SELECT
+    chain_id, market_id,
+    suppliers,
+    top1_supplier,
+    top1_supply_pct / 100 AS top1_supply_pct,
+    top3_supply_pct / 100 AS top3_supply_pct
+FROM v_supplier_concentration
+"""
+
+# Per-market gross/net loan-side flows over trailing windows, anchored to the
+# newest event in the store (not wall clock) like every other export cut.
+# Sums are loan-token units; the FE derives USD via market_health's supply_usd.
+_FLOWS_SUMMARY_SQL = """
+WITH g AS (SELECT MAX(ts) AS gmax FROM market_flows)
+SELECT
+    f.chain_id,
+    f.market_id,
+    any_value(f.loan_symbol) AS loan_symbol,
+    COALESCE(SUM(f.supply_flow) FILTER (f.supply_flow > 0 AND f.ts >= g.gmax - INTERVAL 24 HOUR), 0)  AS supply_in_24h,
+    COALESCE(SUM(-f.supply_flow) FILTER (f.supply_flow < 0 AND f.ts >= g.gmax - INTERVAL 24 HOUR), 0) AS supply_out_24h,
+    COALESCE(SUM(f.supply_flow) FILTER (f.ts >= g.gmax - INTERVAL 24 HOUR), 0)                        AS net_supply_24h,
+    COALESCE(SUM(f.borrow_flow) FILTER (f.ts >= g.gmax - INTERVAL 24 HOUR), 0)                        AS net_borrow_24h,
+    COALESCE(SUM(f.supply_flow) FILTER (f.supply_flow > 0 AND f.ts >= g.gmax - INTERVAL 7 DAY), 0)    AS supply_in_7d,
+    COALESCE(SUM(-f.supply_flow) FILTER (f.supply_flow < 0 AND f.ts >= g.gmax - INTERVAL 7 DAY), 0)   AS supply_out_7d,
+    COALESCE(SUM(f.supply_flow) FILTER (f.ts >= g.gmax - INTERVAL 7 DAY), 0)                          AS net_supply_7d,
+    COALESCE(SUM(f.borrow_flow) FILTER (f.ts >= g.gmax - INTERVAL 7 DAY), 0)                          AS net_borrow_7d,
+    COUNT(*) FILTER (f.type = 'Liquidation')                                                          AS n_liquidations_30d
+FROM v_market_flows f
+CROSS JOIN g
+WHERE f.ts >= g.gmax - INTERVAL 30 DAY
+GROUP BY f.chain_id, f.market_id
+ORDER BY ABS(net_supply_24h) DESC
+"""
+
+# Whale feed: single events >= 5% of market supply, trailing 14d.
+_WHALE_FLOWS_SQL = """
+WITH g AS (SELECT MAX(ts) AS gmax FROM market_flows)
+SELECT w.ts, w.chain_id, w.market_id, w.loan_symbol, w.tx_hash, w.type,
+       w.account, w.flow, w.pct_of_supply / 100 AS pct_of_supply
+FROM v_whale_flows w
+CROSS JOIN g
+WHERE w.ts >= g.gmax - INTERVAL 14 DAY
+ORDER BY w.ts DESC
+"""
+
+# Liquidation feed, trailing 30d, USD-sized where prices exist.
+_LIQUIDATIONS_SQL = """
+WITH g AS (SELECT MAX(ts) AS gmax FROM market_flows)
+SELECT l.ts, l.chain_id, l.market_id, l.loan_symbol, l.collateral_symbol,
+       l.tx_hash, l.borrower, l.liquidator,
+       l.repaid_assets, l.seized_assets, l.bad_debt_assets,
+       l.repaid_usd, l.seized_usd
+FROM v_liquidations l
+CROSS JOIN g
+WHERE l.ts >= g.gmax - INTERVAL 30 DAY
+ORDER BY l.ts DESC
+"""
+
+# Oracle-vs-DefiLlama decoupling episodes over the trailing 30d; `open` = the
+# spell reaches the market's newest oracle-bearing sample (within 2h).
+_DEPEG_SPELLS_SQL = """
+WITH lt AS (
+    SELECT chain_id, market_id, MAX(ts) AS mkt_max_ts
+    FROM v_oracle_price_check GROUP BY chain_id, market_id
+),
+g AS (SELECT MAX(ts) AS gmax FROM v_oracle_price_check)
+SELECT
+    s.chain_id, s.market_id, s.threshold,
+    s.start_ts, s.end_ts, s.duration_min,
+    s.peak_abs_deviation, s.peak_deviation,
+    (s.end_ts >= lt.mkt_max_ts - INTERVAL 2 HOUR) AS open
+FROM v_depeg_spells s
+JOIN lt ON lt.chain_id = s.chain_id AND lt.market_id = s.market_id
+CROSS JOIN g
+WHERE s.end_ts >= g.gmax - INTERVAL 30 DAY
+ORDER BY s.end_ts DESC
 """
 
 # 7d hourly (minute=0) supply-APY/util sparkline per market, oldest first.
@@ -164,6 +254,12 @@ def run_export(reader: MnemonReader, export_dir: Path, generated_at: datetime) -
             latest = latest.merge(
                 reader.sql(_POSITION_RISK_SQL), on=["chain_id", "market_id"], how="left"
             )
+        # Lender concentration needs the supplier_positions table; same optional
+        # merge as borrower risk.
+        if "v_supplier_concentration" in tables and not latest.empty:
+            latest = latest.merge(
+                reader.sql(_SUPPLIER_CONC_SQL), on=["chain_id", "market_id"], how="left"
+            )
         payload = build_market_health(latest, reader.sql(_HISTORY_SQL), generated_at)
         _write_json(export_dir / "market_health.json", payload)
         files += 1
@@ -172,6 +268,22 @@ def run_export(reader: MnemonReader, export_dir: Path, generated_at: datetime) -
     if {"v_util_spells", "market_state"} <= tables:
         payload = build_util_spells(reader.sql(_SPELLS_SQL), generated_at)
         _write_json(export_dir / "util_spells.json", payload)
+        files += 1
+
+    if "v_market_flows" in tables:
+        whales = (
+            reader.sql(_WHALE_FLOWS_SQL) if "v_whale_flows" in tables else pd.DataFrame()
+        )
+        liqs = (
+            reader.sql(_LIQUIDATIONS_SQL) if "v_liquidations" in tables else pd.DataFrame()
+        )
+        payload = build_market_flows(reader.sql(_FLOWS_SUMMARY_SQL), whales, liqs, generated_at)
+        _write_json(export_dir / "market_flows.json", payload)
+        files += 1
+
+    if "v_depeg_spells" in tables:
+        payload = build_depeg_spells(reader.sql(_DEPEG_SPELLS_SQL), generated_at)
+        _write_json(export_dir / "depeg_spells.json", payload)
         files += 1
 
     return f"{files} files, {n_markets} markets @ {generated_at:%Y-%m-%d %H:%M}"
@@ -215,7 +327,9 @@ def build_market_health(
                 "pct_time_gt99_7d": _num(rec.get("pct_time_gt99_7d")),
                 "pct_time_gt99_30d": _num(rec.get("pct_time_gt99_30d")),
             },
+            "oracle_deviation": _num(rec.get("oracle_deviation")),
             "borrower_risk": _borrower_risk(rec),
+            "supplier_concentration": _supplier_concentration(rec),
             "history": hist_by_market.get(rec["market_id"], []),
         }
         for rec in latest.to_dict("records")
@@ -240,6 +354,101 @@ def _borrower_risk(rec: dict) -> dict | None:
         "borrowers_hf_lt_105": _int(rec.get("borrowers_hf_lt_105")),
         "pct_debt_hf_lt_105": _num(rec.get("pct_debt_hf_lt_105")),
         "top3_debt_pct": _num(rec.get("top3_debt_pct")),
+    }
+
+
+def _supplier_concentration(rec: dict) -> dict | None:
+    """Lender-book summary, or None when this market has no supplier data
+    (v_supplier_concentration absent, or the market has no suppliers)."""
+    suppliers = rec.get("suppliers")
+    if suppliers is None or pd.isna(suppliers):
+        return None
+    return {
+        "suppliers": int(suppliers),
+        "top1_supplier": _str(rec.get("top1_supplier")),
+        "top1_supply_pct": _num(rec.get("top1_supply_pct")),
+        "top3_supply_pct": _num(rec.get("top3_supply_pct")),
+    }
+
+
+def build_market_flows(
+    summary: pd.DataFrame, whales: pd.DataFrame, liqs: pd.DataFrame, generated_at: datetime
+) -> dict:
+    markets = [
+        {
+            "market_id": rec["market_id"],
+            "loan_symbol": _str(rec.get("loan_symbol")),
+            "supply_in_24h": _num(rec.get("supply_in_24h")),
+            "supply_out_24h": _num(rec.get("supply_out_24h")),
+            "net_supply_24h": _num(rec.get("net_supply_24h")),
+            "net_borrow_24h": _num(rec.get("net_borrow_24h")),
+            "supply_in_7d": _num(rec.get("supply_in_7d")),
+            "supply_out_7d": _num(rec.get("supply_out_7d")),
+            "net_supply_7d": _num(rec.get("net_supply_7d")),
+            "net_borrow_7d": _num(rec.get("net_borrow_7d")),
+            "n_liquidations_30d": _int(rec.get("n_liquidations_30d")),
+        }
+        for rec in summary.to_dict("records")
+    ]
+    whale_flows = [
+        {
+            "ts": _iso(rec.get("ts")),
+            "market_id": rec["market_id"],
+            "loan_symbol": _str(rec.get("loan_symbol")),
+            "tx_hash": _str(rec.get("tx_hash")),
+            "type": _str(rec.get("type")),
+            "account": _str(rec.get("account")),
+            "flow": _num(rec.get("flow")),
+            "pct_of_supply": _num(rec.get("pct_of_supply")),
+        }
+        for rec in whales.to_dict("records")
+    ]
+    liquidations = [
+        {
+            "ts": _iso(rec.get("ts")),
+            "market_id": rec["market_id"],
+            "loan_symbol": _str(rec.get("loan_symbol")),
+            "collateral_symbol": _str(rec.get("collateral_symbol")),
+            "tx_hash": _str(rec.get("tx_hash")),
+            "borrower": _str(rec.get("borrower")),
+            "liquidator": _str(rec.get("liquidator")),
+            "repaid_assets": _num(rec.get("repaid_assets")),
+            "seized_assets": _num(rec.get("seized_assets")),
+            "bad_debt_assets": _num(rec.get("bad_debt_assets")),
+            "repaid_usd": _num(rec.get("repaid_usd")),
+            "seized_usd": _num(rec.get("seized_usd")),
+        }
+        for rec in liqs.to_dict("records")
+    ]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _iso(generated_at),
+        "chain_id": _sole_chain(summary),
+        "markets": markets,
+        "whale_flows": whale_flows,
+        "liquidations": liquidations,
+    }
+
+
+def build_depeg_spells(spells: pd.DataFrame, generated_at: datetime) -> dict:
+    out = [
+        {
+            "market_id": row.market_id,
+            "threshold": _num(row.threshold),
+            "start_ts": _iso(row.start_ts),
+            "end_ts": _iso(row.end_ts),
+            "duration_min": int(row.duration_min),
+            "peak_abs_deviation": _num(row.peak_abs_deviation),
+            "peak_deviation": _num(row.peak_deviation),
+            "open": bool(row.open),
+        }
+        for row in spells.itertuples(index=False)
+    ]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": _iso(generated_at),
+        "chain_id": _sole_chain(spells),
+        "spells": out,
     }
 
 
