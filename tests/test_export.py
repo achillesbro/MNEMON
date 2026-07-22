@@ -312,6 +312,14 @@ def test_market_flows_export(store, tmp_path):
     assert liq["liquidator"] == "0xliq" and liq["borrower"] == "0xa"
     assert liq["repaid_usd"] == pytest.approx(5_000)  # loan @ $1
 
+    # 7d hourly netflow points (the FE's volume bars): all seeded events sit in
+    # one hour bucket -> one point with the summed signed flows.
+    fh = good["flow_history"]
+    assert len(fh) == 1
+    assert fh[0]["net_supply_flow"] == pytest.approx(99_000)
+    assert fh[0]["net_borrow_flow"] == pytest.approx(-5_000)
+    assert fh[0]["ts"].endswith("Z")
+
 
 def test_market_flows_not_synced_while_catching_up():
     # Ingested history lags generated_at by > 2h (initial backfill / outage):
