@@ -1,0 +1,199 @@
+{
+  "items": [
+    {
+      "txHash": "0xf6258f3c08c771568e8809bf4284089355ba2aacac7ee79d3e4d87b122597dbf",
+      "logIndex": 19,
+      "blockNumber": 41016653,
+      "timestamp": 1784600085,
+      "type": "Withdraw",
+      "user": {
+        "address": "0x835FEBF893c6DdDee5CF762B0f8e31C5B06938ab"
+      },
+      "market": {
+        "marketId": "0x292f0a3ddfb642fbaadf258ebcccf9e4b0048a9dc5af93036288502bde1a71b1",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": "78724783834223889134",
+        "shares": "71357824908321885313958511"
+      }
+    },
+    {
+      "txHash": "0xeb08c95cfbb3e8517bd9105916d253b30fe2d034ca27e1e061caf345896beb4c",
+      "logIndex": 2,
+      "blockNumber": 41016711,
+      "timestamp": 1784600142,
+      "type": "Repay",
+      "user": {
+        "address": "0x39E4D479438563434D7Ad3ef84f83011D5CA0b3D"
+      },
+      "market": {
+        "marketId": "0xd7d38220652d19c87099c3b23de9a70a1893620a050c635d1a94bd947c9c59a8",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": 14336568414,
+        "shares": "13716579089468415"
+      }
+    },
+    {
+      "txHash": "0x619af7906767e2d77a62a85bc2b865abbe5a73d7a63abb71ace43e7c68201ef1",
+      "logIndex": 12,
+      "blockNumber": 41016864,
+      "timestamp": 1784600292,
+      "type": "Supply",
+      "user": {
+        "address": "0x08C00F8279dFF5B0CB5a04d349E7d79708Ceadf3"
+      },
+      "market": {
+        "marketId": "0x45af9c72aa97978e143a646498c8922058b7c6f18b6f7b05d7316c8cf7ab942f",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": 16569557,
+        "shares": 15732801209258
+      }
+    },
+    {
+      "txHash": "0xdb65a72cbfa78fc434027771c3b0aa0965aa07b471a37a53ce534d65e5e56ab2",
+      "logIndex": 2,
+      "blockNumber": 41016964,
+      "timestamp": 1784600391,
+      "type": "Supply",
+      "user": {
+        "address": "0x4CBA781912cA68B5f035A6E9e41DdA280701110f"
+      },
+      "market": {
+        "marketId": "0xe7aa046832007a975d4619260d221229e99cc27da2e6ef162881202b4cd2349b",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": 1000000,
+        "shares": 942753719288
+      }
+    },
+    {
+      "txHash": "0xe9be1a56f7e04ecd0e328949e37e3b900a3d684dd2f0d27dea23fb237b894696",
+      "logIndex": 12,
+      "blockNumber": 41016978,
+      "timestamp": 1784600404,
+      "type": "Withdraw",
+      "user": {
+        "address": "0xFc5126377F0efc0041C0969Ef9BA903Ce67d151e"
+      },
+      "market": {
+        "marketId": "0x78f6b57d825ef01a5dc496ad1f426a6375c685047d07a30cd07ac5107ffc7976",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": 149249186,
+        "shares": 138046495558856
+      }
+    },
+    {
+      "txHash": "0x61a5d2e64cc5e0181c267d59705e51f6e4aa5aa37efa61140465219f8ca77136",
+      "logIndex": 43,
+      "blockNumber": 41016987,
+      "timestamp": 1784600413,
+      "type": "Withdraw",
+      "user": {
+        "address": "0x835FEBF893c6DdDee5CF762B0f8e31C5B06938ab"
+      },
+      "market": {
+        "marketId": "0x292f0a3ddfb642fbaadf258ebcccf9e4b0048a9dc5af93036288502bde1a71b1",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionTransferData",
+        "assets": "504288265894692727810",
+        "shares": "457097315507403330965237591"
+      }
+    },
+    {
+      "txHash": "0xf4d84129e014603e7e20528a4ee3aedf7a972a1485905f95db05cb3c8d489678",
+      "logIndex": 0,
+      "blockNumber": 41147449,
+      "timestamp": 1784728737,
+      "type": "SupplyCollateral",
+      "user": {
+        "address": "0x468fb194F44259EC10c016EB8EeacceF1d35FfbE"
+      },
+      "market": {
+        "marketId": "0x96c47d3797394dd25e33f814216793a89d2e6edcc54d1dac3ab4c2b2d82a73b9",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionCollateralTransferData",
+        "assets": "18600274593249155733"
+      }
+    },
+    {
+      "txHash": "0xe89907ed7d5b593c85ffd776072060d57058179d09597acf49a60bce7420fa38",
+      "logIndex": 2,
+      "blockNumber": 41145892,
+      "timestamp": 1784727205,
+      "type": "SupplyCollateral",
+      "user": {
+        "address": "0x9a5B5905c24e199dC81E33C06633E708D19Dfd1A"
+      },
+      "market": {
+        "marketId": "0xd13b1bad542045a8dc729fa0ffcc4f538b9771592c2666e1f09667dcf85804fc",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionCollateralTransferData",
+        "assets": "70000000000000000000"
+      }
+    },
+    {
+      "txHash": "0x121dfee3d71ac8f64cd4e1b6b5e1bf486f1844e8af614ce73db7bf7bf57507fc",
+      "logIndex": 4,
+      "blockNumber": 41148076,
+      "timestamp": 1784729353,
+      "type": "Liquidation",
+      "user": {
+        "address": "0x5f0e86623F0f3528B3174E467dd3b5279e88b614"
+      },
+      "market": {
+        "marketId": "0x920244a8682a53b17fe15597b63abdaa3aecec44e070379c5e43897fb9f42a2b",
+        "chain": {
+          "id": 999
+        }
+      },
+      "data": {
+        "__typename": "MarketTransactionLiquidationData",
+        "liquidator": "0x2a7Bd4089C77925F9fCC8bd177deAe84737066D6",
+        "repaidAssets": 94587067,
+        "repaidShares": 77237715644635,
+        "seizedAssets": 89582190,
+        "badDebtAssets": 0,
+        "badDebtShares": 0
+      }
+    }
+  ],
+  "pageInfo": {
+    "count": 9,
+    "countTotal": 5233
+  }
+}

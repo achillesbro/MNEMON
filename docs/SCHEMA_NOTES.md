@@ -129,6 +129,41 @@ source supports backfill.
   vault, no `state` wrapper) and `vaultV2AllocationTransactions` (unused so
   far; candidate for a future `reallocations` table).
 
+## marketTransactions (introspected 2026-07-22, chain 999)
+
+Per-market Morpho Blue events — source of the `market_flows` table. The old
+`Query.transactions` entity is **deprecated (2026-04-23)** in favor of
+`marketTransactions` / `vaultV1Transactions`; the replacement renames nearly
+everything, so don't copy shapes from the old entity:
+
+- Enum `MarketTransactionType` drops the `Market` prefix:
+  `Supply | Withdraw | Borrow | Repay | SupplyCollateral | WithdrawCollateral
+  | Liquidation` (old: `MarketSupply`, `MarketLiquidation`, ...).
+- Item field is `txHash` (old entity used `hash`); also `logIndex`, `txIndex`,
+  `blockNumber`, `timestamp`, `type`, `user { address }`,
+  `market { marketId chain { id } }`.
+- `data` union types are `MarketTransactionTransferData { assets shares }`
+  (loan units), `MarketTransactionCollateralTransferData { assets }`
+  (collateral units, **no shares**), `MarketTransactionLiquidationData
+  { liquidator repaidAssets repaidShares seizedAssets badDebtAssets
+  badDebtShares }` — old names were `MarketTransferTransactionData` etc.
+  (`Transaction` and the qualifier swap places).
+- Filters: `chainId_in`, `marketUniqueKey_in`, `userAddress_in`, `type_in`,
+  `timestamp_gte/lte`, `assets_gte/lte`, `liquidatorAddress_in`, ...;
+  `orderBy: Timestamp` works here (unlike vaultV2's `Time`).
+- Volume: ~1.6M events all-history on chain 999 (~3.5k/day). That's why the
+  `market_flows` job's first run backfills only `market_flows_backfill_hours`
+  (default 7d ≈ 250 pages) instead of t=0 (~16k pages ≈ 1.4h at the 300ms
+  throttle). Widen the config before the first run if more history is wanted.
+
+Supplier positions: the same `marketPositions` entity that serves the borrower
+book also serves lenders — filter `supplyShares_gte: "1"`, order by
+`SupplyShares`, and fetch `state { supplyShares supplyAssets }`. The borrower
+and supplier filters cannot be combined in one query (where-clauses AND
+together), hence the separate `supplier_positions` job. Only ~900 supplier
+positions exist chain-wide (2026-07-22) — the lender book is far lighter than
+the borrower book.
+
 ## v_market_apy vs bot_scores.apy (cross-check)
 
 `v_market_apy` reimplements the bot's supply-APY derivation in SQL

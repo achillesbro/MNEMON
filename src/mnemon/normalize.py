@@ -209,6 +209,57 @@ def position_rows(items: list[dict], ts: datetime) -> list[dict]:
     return rows
 
 
+def supplier_position_rows(items: list[dict], ts: datetime) -> list[dict]:
+    rows = []
+    for it in items:
+        st = it.get("state") or {}
+        rows.append(
+            {
+                "ts": ts,
+                "chain_id": it["market"]["chain"]["id"],
+                "market_id": it["market"]["marketId"],
+                "supplier": it["user"]["address"].lower(),
+                "supply_shares": as_int(st.get("supplyShares")),
+                "supply_assets": as_int(st.get("supplyAssets")),
+            }
+        )
+    return rows
+
+
+# --- market_flows --------------------------------------------------------------
+
+
+def market_flow_rows(items: list[dict]) -> list[dict]:
+    """marketTransactions items -> market_flows rows. Event-keyed on
+    (tx_hash, log_index). The `data` union decides which amount columns are
+    populated: transfer types carry assets+shares (loan units), collateral
+    transfers carry assets only (collateral units), liquidations carry the
+    repaid/seized/bad-debt triple + liquidator."""
+    rows = []
+    for it in items:
+        data = it.get("data") or {}
+        is_liq = data.get("__typename") == "MarketTransactionLiquidationData"
+        rows.append(
+            {
+                "ts": _dt(int(it["timestamp"])),
+                "chain_id": it["market"]["chain"]["id"],
+                "market_id": it["market"]["marketId"],
+                "block_number": as_int(it.get("blockNumber")),
+                "tx_hash": it["txHash"].lower(),
+                "log_index": it["logIndex"],
+                "type": it["type"],
+                "account": it["user"]["address"].lower(),
+                "assets": None if is_liq else as_int(data.get("assets")),
+                "shares": as_int(data.get("shares")),
+                "liquidator": _lower(data.get("liquidator")),
+                "repaid_assets": as_int(data.get("repaidAssets")),
+                "seized_assets": as_int(data.get("seizedAssets")),
+                "bad_debt_assets": as_int(data.get("badDebtAssets")),
+            }
+        )
+    return rows
+
+
 # --- prices ------------------------------------------------------------------
 
 

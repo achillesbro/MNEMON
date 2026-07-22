@@ -17,7 +17,14 @@ import pytest
 
 from mnemon.jobs.export import build_util_spells, job_export, run_export
 from mnemon.reader import MnemonReader
-from mnemon.schemas import MARKET_STATE, MARKETS, POSITIONS, PRICES
+from mnemon.schemas import (
+    MARKET_FLOWS,
+    MARKET_STATE,
+    MARKETS,
+    POSITIONS,
+    PRICES,
+    SUPPLIER_POSITIONS,
+)
 from mnemon.storage import Store
 
 TS0 = datetime(2026, 7, 20, 0, 0, tzinfo=timezone.utc)
@@ -123,12 +130,16 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
-def test_job_writes_both_files(store, tmp_path):
+def test_job_writes_files(store, tmp_path):
     out = tmp_path / "export"
     summary = job_export(_ctx(store, out))
     assert (out / "market_health.json").exists()
     assert (out / "util_spells.json").exists()
-    assert "2 files" in summary and "4 markets" in summary
+    # depeg_spells needs only market_state+markets+prices (empty spells here,
+    # since no row carries an oracle price); market_flows needs its table.
+    assert (out / "depeg_spells.json").exists()
+    assert not (out / "market_flows.json").exists()
+    assert "3 files" in summary and "4 markets" in summary
 
 
 def test_market_health_contract(store, tmp_path):
@@ -136,7 +147,7 @@ def test_market_health_contract(store, tmp_path):
     job_export(_ctx(store, out))
     doc = _load(out / "market_health.json")
 
-    assert doc["schema_version"] == 2
+    assert doc["schema_version"] == 3
     assert doc["chain_id"] == 999
     assert doc["generated_at"].endswith("Z")
     by_id = {m["market_id"]: m for m in doc["markets"]}
@@ -187,8 +198,11 @@ def test_market_health_enrichment(store, tmp_path):
 
     # Markets without a borrower book expose borrower_risk = null.
     assert by_id["0xpin"]["borrower_risk"] is None
-    # Optional fields degrade to null, never missing keys.
+    # Optional fields degrade to null, never missing keys. No supplier
+    # snapshot / oracle-bearing rows in this store -> null, keys present.
     assert "oracle_price" in good and "collateral_vol_7d" in good
+    assert good["supplier_concentration"] is None
+    assert good["oracle_deviation"] is None
 
 
 def test_market_health_sparkline(store, tmp_path):
@@ -216,7 +230,7 @@ def test_util_spells_contract(store, tmp_path):
     job_export(_ctx(store, out))
     doc = _load(out / "util_spells.json")
 
-    assert doc["schema_version"] == 2 and doc["chain_id"] == 999
+    assert doc["schema_version"] == 3 and doc["chain_id"] == 999
     pin = [s for s in doc["spells"] if s["market_id"] == "0xpin"]
     # Pinned market breaks both the 0.92 and 0.95 bands, both still open.
     assert {s["threshold"] for s in pin} == {0.92, 0.95}
@@ -242,7 +256,73 @@ def test_rerun_overwrites_atomically(store, tmp_path):
 
 def test_empty_spells_frame_shapes_cleanly():
     doc = build_util_spells(pd.DataFrame(columns=["chain_id"]), datetime(2026, 7, 21, tzinfo=timezone.utc))
-    assert doc["spells"] == [] and doc["chain_id"] is None and doc["schema_version"] == 2
+    assert doc["spells"] == [] and doc["chain_id"] is None and doc["schema_version"] == 3
+
+
+def _seed_flows_and_suppliers(store: Store) -> None:
+    """One whale deposit, one small withdrawal, one liquidation on 0xgood,
+    plus a 2-lender book — enough to light up every flow/concentration cut."""
+    t = TS0 + timedelta(hours=29)
+    base = {
+        "chain_id": 999, "market_id": "0xgood", "account": "0xa",
+        "shares": None, "liquidator": None, "repaid_assets": None,
+        "seized_assets": None, "bad_debt_assets": None,
+    }
+    store.upsert(MARKET_FLOWS, [
+        {**base, "ts": t, "block_number": 1, "tx_hash": "0xt1", "log_index": 1,
+         "type": "Supply", "assets": 100_000 * 10**6},  # 10% of $1M supply -> whale
+        {**base, "ts": t, "block_number": 2, "tx_hash": "0xt2", "log_index": 2,
+         "type": "Withdraw", "assets": 1_000 * 10**6},
+        {**base, "ts": t, "block_number": 3, "tx_hash": "0xt3", "log_index": 3,
+         "type": "Liquidation", "assets": None, "liquidator": "0xliq",
+         "repaid_assets": 5_000 * 10**6, "seized_assets": 10**18, "bad_debt_assets": 0},
+    ])
+    store.upsert(SUPPLIER_POSITIONS, [
+        {"ts": t, "chain_id": 999, "market_id": "0xgood", "supplier": s,
+         "supply_shares": a, "supply_assets": a}
+        for s, a in [("0xs1", 900_000 * 10**6), ("0xs2", 100_000 * 10**6)]
+    ])
+
+
+def test_market_flows_export(store, tmp_path):
+    _seed_flows_and_suppliers(store)
+    out = tmp_path / "export"
+    summary = job_export(_ctx(store, out))
+    assert "4 files" in summary
+    doc = _load(out / "market_flows.json")
+
+    assert doc["schema_version"] == 3 and doc["chain_id"] == 999
+    good = next(m for m in doc["markets"] if m["market_id"] == "0xgood")
+    assert good["supply_in_24h"] == pytest.approx(100_000)
+    assert good["supply_out_24h"] == pytest.approx(1_000)
+    assert good["net_supply_24h"] == pytest.approx(99_000)
+    assert good["net_borrow_24h"] == pytest.approx(-5_000)  # liquidation repaid
+    assert good["net_supply_7d"] == good["net_supply_24h"]  # same events in window
+    assert good["n_liquidations_30d"] == 1
+
+    # Whale feed: only the 10%-of-supply deposit qualifies; pct is a fraction.
+    assert [w["type"] for w in doc["whale_flows"]] == ["Supply"]
+    assert doc["whale_flows"][0]["flow"] == pytest.approx(100_000)
+    assert doc["whale_flows"][0]["pct_of_supply"] == pytest.approx(0.10, rel=0.15)
+
+    liq = doc["liquidations"][0]
+    assert liq["liquidator"] == "0xliq" and liq["borrower"] == "0xa"
+    assert liq["repaid_usd"] == pytest.approx(5_000)  # loan @ $1
+
+
+def test_supplier_concentration_in_market_health(store, tmp_path):
+    _seed_flows_and_suppliers(store)
+    out = tmp_path / "export"
+    job_export(_ctx(store, out))
+    by_id = {m["market_id"]: m for m in _load(out / "market_health.json")["markets"]}
+
+    sc = by_id["0xgood"]["supplier_concentration"]
+    assert sc["suppliers"] == 2
+    assert sc["top1_supplier"] == "0xs1"
+    assert sc["top1_supply_pct"] == pytest.approx(0.9)  # fraction, like the FE's other ratios
+    assert sc["top3_supply_pct"] == pytest.approx(1.0)
+    # Markets without a lender snapshot stay null.
+    assert by_id["0xpin"]["supplier_concentration"] is None
 
 
 def test_run_export_skips_when_views_absent(tmp_path):

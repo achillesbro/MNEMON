@@ -1,0 +1,83 @@
+{
+  "items": [
+    {
+      "user": {
+        "address": "0x2900ABd73631b2f60747e687095537B673c06A76"
+      },
+      "market": {
+        "marketId": "0x64e7db7f042812d4335947a7cdf6af1093d29478aff5f1ccd93cc67f8aadfddc",
+        "chain": {
+          "id": 999
+        }
+      },
+      "state": {
+        "supplyShares": "346034288508876928595845029478",
+        "supplyAssets": "355524515952623882338304"
+      }
+    },
+    {
+      "user": {
+        "address": "0x835FEBF893c6DdDee5CF762B0f8e31C5B06938ab"
+      },
+      "market": {
+        "marketId": "0x5fe3ac84f3a2c4e3102c3e6e9accb1ec90c30f6ee87ab1fcafc197b8addeb94c",
+        "chain": {
+          "id": 999
+        }
+      },
+      "state": {
+        "supplyShares": "259642899906585260827750047169",
+        "supplyAssets": "280208951547774866817024"
+      }
+    },
+    {
+      "user": {
+        "address": "0x835FEBF893c6DdDee5CF762B0f8e31C5B06938ab"
+      },
+      "market": {
+        "marketId": "0x292f0a3ddfb642fbaadf258ebcccf9e4b0048a9dc5af93036288502bde1a71b1",
+        "chain": {
+          "id": 999
+        }
+      },
+      "state": {
+        "supplyShares": "183504911079658800279656062044",
+        "supplyAssets": "202507988795103884869632"
+      }
+    },
+    {
+      "user": {
+        "address": "0xd19e3d00f8547f7d108abFD4bbb015486437B487"
+      },
+      "market": {
+        "marketId": "0x0e5172eeb1bbf076fccc101f4a47e6f2db42eb7c39e44bd015c64b5e63e3da3d",
+        "chain": {
+          "id": 999
+        }
+      },
+      "state": {
+        "supplyShares": "13517788016886544763849850407",
+        "supplyAssets": "14161404293354805526528"
+      }
+    },
+    {
+      "user": {
+        "address": "0xD3A9Cb7312B9c29113290758f5ADFe12304cd16A"
+      },
+      "market": {
+        "marketId": "0x1da89208e6cb5173e97a83461853b8400de4f7c37542cf010a10579a5f7ca451",
+        "chain": {
+          "id": 999
+        }
+      },
+      "state": {
+        "supplyShares": "12111680617636645425483243300",
+        "supplyAssets": "35493044814806440214528"
+      }
+    }
+  ],
+  "pageInfo": {
+    "countTotal": 897,
+    "count": 5
+  }
+}

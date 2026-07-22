@@ -114,6 +114,29 @@ they diverge, yield exists only at un-deployable size. Live calibration
 universe gap 3482 bps collapsed to 1 bp deployable — HEGEMON's set was
 near-optimal.
 
+## Market-analysis pipeline (added 2026-07-22)
+
+- `market_flows` job (15 min): whole-chain Morpho Blue events from the
+  `marketTransactions` API entity (Supply/Withdraw/Borrow/Repay/
+  SupplyCollateral/WithdrawCollateral/Liquidation), event-keyed on
+  `(tx_hash, log_index)`, per-chain ts cursor (`market_flows:<chain>`) with 1h
+  overlap. **First run backfills only `market_flows_backfill_hours` (7d), not
+  t=0** — the chain has ~1.6M historical events. Truncated fetches self-heal:
+  the cursor advances only to the last event received.
+- `supplier_positions` job (hourly): lender book per tracked market
+  (`marketPositions` with `supplyShares_gte`), no supply floor — ~900 rows
+  chain-wide. Answers "who can unilaterally move a market's yield".
+- `positions` cadence bumped hourly → 5 min (the scheduler-tick floor).
+- Views: `v_market_flows` (human units + SIGNED supply_flow/borrow_flow;
+  liquidations debit borrow by repaid and supply by bad debt),
+  `v_market_netflow` (hourly gross/net per market), `v_liquidations`
+  (USD-sized via ASOF prices), `v_whale_flows` (single events ≥ 5% of ASOF
+  market supply), `v_supplier_concentration` (top1/top3 lender share; top
+  suppliers are often V1 vaults — that's the answer, not an artifact),
+  `v_oracle_price_check` (Morpho oracle vs DefiLlama collateral/loan cross —
+  only live rows carry an oracle price; exchange-rate oracles show structural
+  deviation), `v_depeg_spells` (gaps-and-islands, |deviation| ≥ 2%/5%).
+
 ### FE export job (added 2026-07-21)
 
 `export` job (15 min, runs LAST after `heal`) writes static JSON snapshots to
@@ -137,6 +160,14 @@ fractions) and `borrower_risk` (`v_position_risk` — merged in pandas, null whe
 the `positions` table is absent or the market has no borrowers). All enrichment
 joins share `v_market_health`'s deps except positions, so the export never
 fails on a partial store; the FE treats every new field as optional (nullish).
+
+schema_version 3 (2026-07-22) adds `oracle_deviation` (`v_oracle_price_check`)
+and `supplier_concentration` (`v_supplier_concentration`, pandas-merged like
+borrower_risk, null without the `supplier_positions` table) to
+`market_health.json`, plus two files: `market_flows.json` (per-market 24h/7d
+gross/net loan-side flows + 14d whale feed + 30d liquidation feed) and
+`depeg_spells.json` (30d oracle-vs-DefiLlama decoupling episodes, same shape
+as util_spells).
 
 ## API gotchas (see docs/SCHEMA_NOTES.md for the full list)
 

@@ -157,6 +157,47 @@ def test_price_rows_morpho_history(fixture):
     assert all(r["token_address"] == asset["address"].lower() for r in rows)
 
 
+def test_supplier_position_rows(fixture):
+    items = fixture("supplier_positions_page")["items"]
+    rows = normalize.supplier_position_rows(items, TS)
+    assert len(rows) == 5
+    for r in rows:
+        assert r["chain_id"] == 999
+        assert r["supplier"].startswith("0x") and r["supplier"] == r["supplier"].lower()
+        assert r["supply_shares"] > 0
+        assert r["supply_assets"] > 0
+        assert r["ts"] == TS
+
+
+def test_market_flow_rows(fixture):
+    # Fixture captured 2026-07-22 from marketTransactions (api.morpho.org);
+    # holds Supply/Withdraw/Repay/SupplyCollateral/Liquidation events.
+    items = fixture("market_transactions")["items"]
+    rows = normalize.market_flow_rows(items)
+    assert len(rows) == 9
+    by_type: dict[str, dict] = {}
+    for r in rows:
+        by_type.setdefault(r["type"], r)
+        assert r["chain_id"] == 999
+        assert r["tx_hash"] == r["tx_hash"].lower()
+        assert r["account"] == r["account"].lower()
+        assert r["log_index"] is not None and r["block_number"] > 0
+        assert r["ts"].tzinfo is not None
+
+    transfer = by_type["Supply"]
+    assert transfer["assets"] > 0 and transfer["shares"] > 0
+    assert transfer["liquidator"] is None and transfer["repaid_assets"] is None
+
+    coll = by_type["SupplyCollateral"]
+    assert coll["assets"] > 0 and coll["shares"] is None  # collateral units, no shares
+
+    liq = by_type["Liquidation"]
+    assert liq["assets"] is None and liq["shares"] is None
+    assert liq["liquidator"] == liq["liquidator"].lower()
+    assert liq["repaid_assets"] > 0 and liq["seized_assets"] > 0
+    assert liq["bad_debt_assets"] is not None  # 0 when no bad debt realized
+
+
 def test_yield_pool_rows_filters_chain(fixture):
     pools = fixture("yield_pools_sample")["data"]
     rows = normalize.yield_pool_rows(pools, {"Hyperliquid L1"}, TS)
