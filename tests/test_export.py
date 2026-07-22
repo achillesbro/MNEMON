@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from mnemon.jobs.export import build_util_spells, job_export, run_export
+from mnemon.jobs.export import build_market_flows, build_util_spells, job_export, run_export
 from mnemon.reader import MnemonReader
 from mnemon.schemas import (
     MARKET_FLOWS,
@@ -292,6 +292,9 @@ def test_market_flows_export(store, tmp_path):
     doc = _load(out / "market_flows.json")
 
     assert doc["schema_version"] == 3 and doc["chain_id"] == 999
+    # Newest event is 1h before generated_at -> windows are current.
+    assert doc["synced"] is True
+    assert doc["data_through"] == (TS0 + timedelta(hours=29)).strftime("%Y-%m-%dT%H:%M:%SZ")
     good = next(m for m in doc["markets"] if m["market_id"] == "0xgood")
     assert good["supply_in_24h"] == pytest.approx(100_000)
     assert good["supply_out_24h"] == pytest.approx(1_000)
@@ -308,6 +311,26 @@ def test_market_flows_export(store, tmp_path):
     liq = doc["liquidations"][0]
     assert liq["liquidator"] == "0xliq" and liq["borrower"] == "0xa"
     assert liq["repaid_usd"] == pytest.approx(5_000)  # loan @ $1
+
+
+def test_market_flows_not_synced_while_catching_up():
+    # Ingested history lags generated_at by > 2h (initial backfill / outage):
+    # the FE must see synced=false and gate the "last 24h" display on it.
+    empty = pd.DataFrame()
+    doc = build_market_flows(
+        empty, empty, empty,
+        generated_at=datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc),
+        data_through=datetime(2026, 7, 22, 9, 0, tzinfo=timezone.utc),
+    )
+    assert doc["synced"] is False
+    assert doc["data_through"] == "2026-07-22T09:00:00Z"
+    # No events at all (fresh table) -> null data_through, not synced.
+    doc = build_market_flows(
+        empty, empty, empty,
+        generated_at=datetime(2026, 7, 22, 12, 0, tzinfo=timezone.utc),
+        data_through=None,
+    )
+    assert doc["synced"] is False and doc["data_through"] is None
 
 
 def test_supplier_concentration_in_market_health(store, tmp_path):

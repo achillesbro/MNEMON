@@ -167,7 +167,10 @@ borrower_risk, null without the `supplier_positions` table) to
 `market_health.json`, plus two files: `market_flows.json` (per-market 24h/7d
 gross/net loan-side flows + 14d whale feed + 30d liquidation feed) and
 `depeg_spells.json` (30d oracle-vs-DefiLlama decoupling episodes, same shape
-as util_spells).
+as util_spells). `market_flows.json` windows anchor to the newest *ingested*
+event, so it carries `data_through` + `synced` (data_through within 2h of
+generated_at) — the FE gates the flows display on `synced` during the initial
+cursor catch-up or any ingestion outage.
 
 ## API gotchas (see docs/SCHEMA_NOTES.md for the full list)
 
