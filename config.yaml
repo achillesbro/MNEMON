@@ -104,7 +104,9 @@ http:
 # Safety cap on position pagination (100 positions per page, per market).
 positions_max_pages: 50
 
-# First-run lookback for market_flows (hours). Bounded on purpose — the chain
-# has millions of historical events; a t=0 backfill would page for hours.
-# Ignored once the per-chain cursor exists.
-market_flows_backfill_hours: 168
+# First-run lookback for market_flows (hours). Ignored once the per-chain
+# cursor exists. 12000h (~500d) reaches back past the first HyperEVM Morpho
+# market (2025-04): the ~1.6M-event catch-up proceeds in 40k-event chunks
+# (one per job run, cursor-resumed), so the scheduler absorbs it unattended
+# in ~10h of ticks — or loop `run --only market_flows` to finish in ~3h.
+market_flows_backfill_hours: 12000
