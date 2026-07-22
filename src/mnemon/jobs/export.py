@@ -18,7 +18,9 @@ Files (each carries schema_version + generated_at + chain_id):
                       sample.
   market_flows.json   per-market gross/net loan-side flows (24h/7d) + the 14d
                       whale-flow feed + the 30d liquidation feed, from the
-                      market_flows event table.
+                      market_flows event table. Windows anchor to the newest
+                      INGESTED event (`data_through`), not wall clock; the FE
+                      gates the display on `synced`.
   depeg_spells.json   v_depeg_spells (oracle vs DefiLlama decoupling episodes)
                       for the trailing 30d, same shape as util_spells.
 """
@@ -277,7 +279,10 @@ def run_export(reader: MnemonReader, export_dir: Path, generated_at: datetime) -
         liqs = (
             reader.sql(_LIQUIDATIONS_SQL) if "v_liquidations" in tables else pd.DataFrame()
         )
-        payload = build_market_flows(reader.sql(_FLOWS_SUMMARY_SQL), whales, liqs, generated_at)
+        data_through = reader.sql("SELECT MAX(ts) AS mx FROM market_flows")["mx"].iloc[0]
+        payload = build_market_flows(
+            reader.sql(_FLOWS_SUMMARY_SQL), whales, liqs, generated_at, data_through
+        )
         _write_json(export_dir / "market_flows.json", payload)
         files += 1
 
@@ -372,8 +377,23 @@ def _supplier_concentration(rec: dict) -> dict | None:
 
 
 def build_market_flows(
-    summary: pd.DataFrame, whales: pd.DataFrame, liqs: pd.DataFrame, generated_at: datetime
+    summary: pd.DataFrame,
+    whales: pd.DataFrame,
+    liqs: pd.DataFrame,
+    generated_at: datetime,
+    data_through,
 ) -> dict:
+    """`data_through` = newest ingested event ts. Every window in this file is
+    anchored to it (not to wall clock), so while the cursor is catching up —
+    initial backfill or post-outage — the windows describe the past. `synced`
+    tells the FE whether they are current: the chain averages ~2.4 events/min,
+    so a data_through more than 2h behind generated_at means ingestion lag,
+    not a quiet chain."""
+    synced = (
+        data_through is not None
+        and not pd.isna(data_through)
+        and pd.Timestamp(generated_at) - pd.Timestamp(data_through) <= pd.Timedelta(hours=2)
+    )
     markets = [
         {
             "market_id": rec["market_id"],
@@ -423,6 +443,8 @@ def build_market_flows(
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": _iso(generated_at),
+        "data_through": _iso(data_through),
+        "synced": synced,
         "chain_id": _sole_chain(summary),
         "markets": markets,
         "whale_flows": whale_flows,
