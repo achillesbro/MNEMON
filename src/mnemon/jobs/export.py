@@ -159,6 +159,18 @@ GROUP BY f.chain_id, f.market_id
 ORDER BY ABS(net_supply_24h) DESC
 """
 
+# Per-market hourly net flows, trailing 7d — the FE's volume-bar strip under
+# the APY/util sparkline. Sparse by construction: v_market_netflow only has
+# rows for hours with events. Loan-token units, like the summary windows.
+_FLOWS_HISTORY_SQL = """
+WITH g AS (SELECT MAX(ts) AS gmax FROM market_flows)
+SELECT n.chain_id, n.market_id, n.ts, n.net_supply_flow, n.net_borrow_flow
+FROM v_market_netflow n
+CROSS JOIN g
+WHERE n.ts >= g.gmax - INTERVAL 7 DAY
+ORDER BY n.chain_id, n.market_id, n.ts
+"""
+
 # Whale feed: single events >= 5% of market supply, trailing 14d.
 _WHALE_FLOWS_SQL = """
 WITH g AS (SELECT MAX(ts) AS gmax FROM market_flows)
@@ -281,7 +293,12 @@ def run_export(reader: MnemonReader, export_dir: Path, generated_at: datetime) -
         )
         data_through = reader.sql("SELECT MAX(ts) AS mx FROM market_flows")["mx"].iloc[0]
         payload = build_market_flows(
-            reader.sql(_FLOWS_SUMMARY_SQL), whales, liqs, generated_at, data_through
+            reader.sql(_FLOWS_SUMMARY_SQL),
+            whales,
+            liqs,
+            generated_at,
+            data_through,
+            reader.sql(_FLOWS_HISTORY_SQL),
         )
         _write_json(export_dir / "market_flows.json", payload)
         files += 1
@@ -382,6 +399,7 @@ def build_market_flows(
     liqs: pd.DataFrame,
     generated_at: datetime,
     data_through,
+    flow_history: pd.DataFrame | None = None,
 ) -> dict:
     """`data_through` = newest ingested event ts. Every window in this file is
     anchored to it (not to wall clock), so while the cursor is catching up —
@@ -394,6 +412,18 @@ def build_market_flows(
         and not pd.isna(data_through)
         and pd.Timestamp(generated_at) - pd.Timestamp(data_through) <= pd.Timedelta(hours=2)
     )
+    # 7d hourly netflow points per market (sparse: only hours with events),
+    # for the FE's volume bars under the APY sparkline.
+    hist_by_market: dict[str, list[dict]] = {}
+    if flow_history is not None:
+        for row in flow_history.itertuples(index=False):
+            hist_by_market.setdefault(row.market_id, []).append(
+                {
+                    "ts": _iso(row.ts),
+                    "net_supply_flow": _num(row.net_supply_flow),
+                    "net_borrow_flow": _num(row.net_borrow_flow),
+                }
+            )
     markets = [
         {
             "market_id": rec["market_id"],
@@ -407,6 +437,7 @@ def build_market_flows(
             "net_supply_7d": _num(rec.get("net_supply_7d")),
             "net_borrow_7d": _num(rec.get("net_borrow_7d")),
             "n_liquidations_30d": _int(rec.get("n_liquidations_30d")),
+            "flow_history": hist_by_market.get(rec["market_id"], []),
         }
         for rec in summary.to_dict("records")
     ]
