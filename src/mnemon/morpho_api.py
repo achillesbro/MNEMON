@@ -365,23 +365,49 @@ class MorphoClient:
         return items
 
     def market_transactions(
-        self, chain_id: int, since_ts: int, max_pages: int = 100
+        self, chain_id: int, since_ts: int, max_requests: int = 100
     ) -> tuple[list[dict], bool]:
         """Whole-chain Morpho Blue market events since `since_ts` (inclusive),
-        oldest first. Returns (items, truncated). NB: the API rejects
-        skip > 10,000 (discovered live 2026-07-22), so one call can never page
-        past max_pages=100 — deep history is walked by re-querying with
-        since_ts advanced to the last timestamp seen (skip resets to 0), which
-        is what truncated=True tells the caller to do."""
+        oldest first. Returns (items, truncated).
+
+        This entity's pagination is quirky (both discovered live 2026-07-22/23,
+        see docs/SCHEMA_NOTES.md):
+        - `skip` is rejected above 10,000, and
+        - pages come back SHORT mid-history (rows are dropped server-side
+          after LIMIT, so `first: 100` returns ~98-99 and stride paging
+          silently loses the dropped rows).
+        So neither skip depth nor page fullness can be trusted: every request
+        fetches from `timestamp_gte` with skip=0 and the window advances to
+        the newest timestamp seen — rows a short page dropped at its tail
+        reappear in the next window, and the caller's (tx_hash, log_index)
+        key dedupes the seam. skip is only used as a bounded fallback when an
+        entire page shares one timestamp (impossible at this chain's event
+        rate, but it must not infinite-loop). truncated=True means the request
+        budget ran out with the stream still flowing — resume from the last
+        item's timestamp."""
         items: list[dict] = []
-        for page in range(max_pages):
-            data = self.query(
+        since = int(since_ts)
+        skip = 0
+        for _ in range(max_requests):
+            page = self.query(
                 Q_MARKET_TRANSACTIONS,
-                {"chainIds": [chain_id], "sinceTs": since_ts, "first": 100, "skip": page * 100},
-            )["marketTransactions"]
-            items.extend(data["items"])
-            if data["pageInfo"]["count"] < 100:
+                {"chainIds": [chain_id], "sinceTs": since, "first": 100, "skip": skip},
+            )["marketTransactions"]["items"]
+            if not page:
                 return items, False
+            items.extend(page)
+            latest = max(int(it["timestamp"]) for it in page)
+            if latest > since:
+                since, skip = latest, 0
+            else:
+                skip += 100
+                if skip > 10_000:
+                    log.warning(
+                        "market_transactions: >10k events at ts %d on chain %d, cannot page past",
+                        since,
+                        chain_id,
+                    )
+                    return items, False
         return items, True
 
     def vault_v2_state(self, address: str, chain_id: int) -> dict | None:

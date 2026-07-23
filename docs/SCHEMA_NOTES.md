@@ -156,13 +156,22 @@ everything, so don't copy shapes from the old entity:
   (default 7d ≈ 250 pages) instead of t=0 (~16k pages ≈ 1.4h at the 300ms
   throttle). Widen the config before the first run if more history is wanted.
 - **`skip` is capped at 10,000** (BAD_USER_INPUT above it — discovered live
-  2026-07-22 when the backfill stalled). Deep history therefore CANNOT be
-  paged with skip alone: walk it in timestamp windows — fetch ≤100 pages,
-  advance `timestamp_gte` to the last event seen (skip resets to 0), repeat.
-  The `market_flows` job commits each window (upsert + cursor + state save)
-  so an error mid-walk never loses fetched data. Assume the same cap on every
+  2026-07-22 when the backfill stalled). Assume the same cap on every
   paginated entity (`marketPositions`, `vaultV2transactions`) — they just
   haven't hit it yet at current data sizes.
+- **Pages come back SHORT of `first`** (discovered live 2026-07-23 when the
+  catch-up crawled at one page per run): `first: 100` returns ~98-99 items
+  mid-history — rows are dropped server-side AFTER the LIMIT, so `count <
+  first` does NOT mean end-of-data, and stride paging (skip += 100) silently
+  loses the dropped rows at every page boundary. Verified: walking the same
+  range with 100-item vs 10-item pages by timestamp yields identical event
+  sets, so the dropped tail rows reappear when the next window re-queries
+  from the last timestamp seen. Hence `market_transactions` never trusts
+  skip or page fullness: skip=0 always, advance `timestamp_gte` to the newest
+  event seen, stop on an EMPTY page (the event key dedupes window seams);
+  skip is only a bounded fallback within a single-second flood. The
+  `market_flows` job commits each batch (upsert + cursor + state save) so an
+  error mid-walk never loses fetched data.
 
 Supplier positions: the same `marketPositions` entity that serves the borrower
 book also serves lenders — filter `supplyShares_gte: "1"`, order by
